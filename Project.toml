@@ -1,7 +1,7 @@
 name = "ParallelParticleSwarms"
 uuid = "ab63da0c-63b4-40fa-a3b7-d2cba5be6419"
-authors = ["Utkarsh <rajpututkarsh530@gmail.com> and contributors"]
 version = "0.1.0"
+authors = ["Utkarsh <rajpututkarsh530@gmail.com> and contributors"]
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -24,7 +24,7 @@ DiffEqGPU = "3.4"
 Enzyme = "<0.13.35"
 ForwardDiff = "0.10"
 KernelAbstractions = "<0.9.30"
-Optimization = "4.1"
+Optimization = "4.1, 5"
 QuasiMonteCarlo = "0.3"
 Reexport = "1.2"
 SciMLBase = "2.79"
