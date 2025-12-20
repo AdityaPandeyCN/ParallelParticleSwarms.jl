@@ -3,7 +3,9 @@ using Pkg
 Pkg.activate(@__DIR__)
 
 using SimpleChains,
-      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationFlux, Plots
+      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, Plots
+
+using OptimizationOptimisers
 
 using CUDA
 device!(2)
@@ -201,3 +203,4 @@ savefig("neural_ode.svg")
 
 # pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
 # scatter!(plt, pred_lbfgs[1, :], pred_lbfgs[2, :], label = "Adam prediction")
+

@@ -6,8 +6,8 @@ using StaticArrays
 using OrdinaryDiffEq
 using SciMLSensitivity
 using Optimization
-using OptimizationFlux
 using OptimizationOptimJL
+using OptimizationOptimisers
 using OptimizationSciPy
 using ParallelParticleSwarms
 using CUDA
