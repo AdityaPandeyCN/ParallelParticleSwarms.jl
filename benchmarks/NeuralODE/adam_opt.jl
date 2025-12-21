@@ -3,7 +3,7 @@ using Pkg
 Pkg.activate(@__DIR__)
 
 using SimpleChains,
-      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, Plots
+      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization
 
 using OptimizationOptimisers
 
@@ -167,31 +167,6 @@ adaptive = true
     maxiters = 100)
 
 @show gsol.cost
-
-using Plots
-
-function predict_neuralode(p)
-    Array(solve(prob_nn, Tsit5(); p = p, saveat = tsteps))
-end
-
-plt = scatter(tsteps,
-    data[1, :],
-    label = "data",
-    ylabel = "u(t)",
-    xlabel = "t",
-    linewidth = 4,
-    title = "Optimizers performance after 100 iterations")
-
-pred_pso = predict_neuralode((sc, gsol.position))
-scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
-
-pred_adam = predict_neuralode((sc, res_adam.u))
-scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
-
-pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
-scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
-
-savefig("neural_ode.svg")
 
 # plt = plot(data[1, :], data[2, :], label = "data")
 
