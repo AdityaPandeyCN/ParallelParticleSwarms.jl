@@ -105,17 +105,17 @@ x0 = Float64.(collect(p_static))
 scipy_prob = OptimizationProblem(loss_scipy, x0, (prob_nn, collect(Float32.(tsteps))); lb = lb, ub = ub)
 
 @info "SciPy DE (maxiters=200)"
-@time sol_de = Optimization.solve(scipy_prob, Scipy_DE(), maxiters = 200)
+@time sol_de = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDifferentialEvolution(), maxiters = 200)
 @show sol_de.objective
 @show sol_de.stats.time
 
 @info "SciPy DualAnnealing (maxiters=200)"
-@time sol_da = Optimization.solve(scipy_prob, Scipy_DualAnnealing(), maxiters = 200)
+@time sol_da = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDualAnnealing(), maxiters = 200)
 @show sol_da.objective
 @show sol_da.stats.time
 
 @info "SciPy SHGO (maxiters=200)"
-@time sol_shgo = Optimization.solve(scipy_prob, Scipy_SHGO(), maxiters = 200)
+@time sol_shgo = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyShgo(), maxiters = 200)
 @show sol_shgo.objective
 @show sol_shgo.stats.time
 
