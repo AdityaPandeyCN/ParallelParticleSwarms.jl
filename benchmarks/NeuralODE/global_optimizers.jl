@@ -60,14 +60,11 @@ end
 function loss_neuralode(p)
     pred = predict_neuralode(p)
     loss = sum(abs2, data .- pred)
-    return loss, pred
+    return loss
 end
 
-# Optimization.jl expects a scalar objective for gradients.
-loss_only(p) = first(loss_neuralode(p))
-
 # ---- Gradient-based baselines (existing style) ----
-optf = Optimization.OptimizationFunction((x, p) -> loss_only(x), Optimization.AutoZygote())
+optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x), Optimization.AutoZygote())
 optprob = Optimization.OptimizationProblem(optf, p_nn)
 
 @info "Adam (100 iters)"
