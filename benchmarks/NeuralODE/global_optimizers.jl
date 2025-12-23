@@ -134,7 +134,8 @@ soptprob = OptimizationProblem(loss_scipy, p_static, (prob_nn, collect(Float32.(
 
 Random.seed!(rng, 0)
 opt = ParallelPSOKernel(n_particles)
-gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(u0))
+# IMPORTANT: initialize particles in the parameter space (length(p_static)), not the ODE state space (length(u0)).
+gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 
 gpu_data = adapt(backend,
     [SVector{length(u0), eltype(u0)}(@view data[:, i]) for i in 1:length(tsteps)])
