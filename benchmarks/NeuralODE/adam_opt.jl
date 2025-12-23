@@ -93,7 +93,8 @@ end
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-prob_nn = ODEProblem(nn_fn, u0, tspan, (sc, p_static))
+# Use FullSpecialize to ensure type stability with remake on GPU
+prob_nn = ODEProblem{false, SciMLBase.FullSpecialize}(nn_fn, u0, tspan, (sc, p_static))
 
 ## Evaluate SciPy global optimizers
 
