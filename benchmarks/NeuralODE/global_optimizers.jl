@@ -82,17 +82,14 @@ moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
 # We use a Float64 vector for SciPy interop, but evaluate loss in Float32 internally.
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-function nn_fn(u::T, p, t)::T where {T}
-    nn, ps = p
-    return nn(u, ps)
-end
-
-prob_nn = ODEProblem(nn_fn, u0, tspan, (sc, p_static))
+nn(u, p, t) = sc(u, p)
+prob_nn = ODEProblem(nn, u0, tspan, p_static)
 
 function loss_scipy(u, p)
     odeprob, t = p
     u32 = Float32.(u)
-    prob = remake(odeprob; p = (odeprob.p[1], u32))
+    u_svec = SVector{length(p_static), Float32}(u32)
+    prob = remake(odeprob; p = u_svec)
     pred = Array(solve(prob, Tsit5(), saveat = t))
     sum(abs2, data .- pred)
 end
@@ -125,7 +122,7 @@ n_particles = 10_000
 backend = CUDABackend()
 
 function prob_func(prob, gpu_particle)
-    remake(prob, p = (prob.p[1], gpu_particle.position))
+    remake(prob, p = gpu_particle.position)
 end
 
 psolb = @SArray fill(-10.0f0, length(p_static))
