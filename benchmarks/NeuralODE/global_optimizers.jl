@@ -122,7 +122,9 @@ n_particles = 10_000
 backend = CUDABackend()
 
 function prob_func(prob, gpu_particle)
-    remake(prob, p = gpu_particle.position)
+    # Help GPU broadcast inference: ensure the returned problem is exactly the same concrete type.
+    # Otherwise GPUArrays may insert a `convert` during broadcast assignment, which is not GPU-compatible.
+    return (remake(prob, p = gpu_particle.position)::typeof(prob))
 end
 
 psolb = @SArray fill(-10.0f0, length(p_static))
