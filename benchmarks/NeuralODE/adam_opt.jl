@@ -126,7 +126,7 @@ backend = CUDABackend()
 Random.seed!(rng, 0)
 
 opt = ParallelPSOKernel(n_particles)
-gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(prob.u0))
+gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 
 gpu_data = adapt(backend,
     [SVector{length(prob_nn.u0), eltype(prob_nn.u0)}(@view data[:, i])
@@ -135,7 +135,7 @@ gpu_data = adapt(backend,
 CUDA.allowscalar(false)
 
 function prob_func(prob, gpu_particle)
-    return remake(prob, p = (prob.p[1], gpu_particle.position))
+    return remake(prob, p = (prob.p[1], gpu_particle.position))::typeof(prob)
 end
 
 gpu_particles = adapt(backend, particles)

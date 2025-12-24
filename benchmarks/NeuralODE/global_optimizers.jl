@@ -3,10 +3,10 @@ using Pkg
 Pkg.activate(@__DIR__)
 
 using SimpleChains,
-      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationFlux, Plots
+      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationOptimisers
 
 using CUDA
-device!(2)
+device!(0)
 # Get Tesla V100S
 u0 = @SArray Float32[2.0, 0.0]
 datasize = 30
@@ -60,7 +60,7 @@ callback = function (p, l, pred; doplot = true)
     return false
 end
 
-optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x),
+optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x)[1],
     Optimization.AutoZygote())
 optprob = Optimization.OptimizationProblem(optf, p_nn)
 
@@ -147,7 +147,7 @@ backend = CUDABackend()
 Random.seed!(rng, 0)
 
 opt = ParallelPSOKernel(n_particles)
-gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(prob.u0))
+gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 
 gpu_data = adapt(backend,
     [SVector{length(prob_nn.u0), eltype(prob_nn.u0)}(@view data[:, i])
@@ -156,7 +156,7 @@ gpu_data = adapt(backend,
 CUDA.allowscalar(false)
 
 function prob_func(prob, gpu_particle)
-    return remake(prob, p = (prob.p[1], gpu_particle.position))
+    return remake(prob, p = (prob.p[1], gpu_particle.position))::typeof(prob)
 end
 
 gpu_particles = adapt(backend, particles)
@@ -187,13 +187,13 @@ adaptive = true
 
 @show gsol.cost
 
-using Plots
+#using Plots
 
 function predict_neuralode(p)
     Array(solve(prob_nn, Tsit5(); p = p, saveat = tsteps))
 end
 
-plt = scatter(tsteps,
+#plt = scatter(tsteps,
     data[1, :],
     label = "data",
     ylabel = "u(t)",
@@ -201,20 +201,19 @@ plt = scatter(tsteps,
     linewidth = 4,
     title = "Optimizers performance after 100 iterations")
 
-pred_pso = predict_neuralode((sc, gsol.position))
-scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
+#pred_pso = predict_neuralode((sc, gsol.position))
+#scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
 
-pred_adam = predict_neuralode((sc, res_adam.u))
-scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
+#pred_adam = predict_neuralode((sc, res_adam.u))
+#scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
 
-pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
-scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
+#pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
+#scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
 
-pred_scipy_de = predict_neuralode((sc, Float32.(sol_de.u)))
-scatter!(plt, tsteps, pred_scipy_de[1, :], label = "scipy DE prediction", markershape = :diamond)
+#pred_scipy_de = predict_neuralode((sc, Float32.(sol_de.u)))
+#scatter!(plt, tsteps, pred_scipy_de[1, :], label = "scipy DE prediction", markershape = :diamond)
 
-pred_scipy_da = predict_neuralode((sc, Float32.(sol_da.u)))
-scatter!(plt, tsteps, pred_scipy_da[1, :], label = "scipy DA prediction", markershape = :hexagon)
+#pred_scipy_da = predict_neuralode((sc, Float32.(sol_da.u)))
+#scatter!(plt, tsteps, pred_scipy_da[1, :], label = "scipy DA prediction", markershape = :hexagon)
 
-savefig("neural_ode.svg")
-
+#savefig("neural_ode.svg")

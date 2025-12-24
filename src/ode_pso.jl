@@ -59,6 +59,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
     update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
 
     improb = make_prob_compatible(prob)
+    probs = similar(gpu_particles, typeof(improb), (length(gpu_particles),))
 
     for i in 1:maxiters
         update_states!(gpu_particles,
@@ -70,7 +71,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        probs = prob_func.(Ref(improb), gpu_particles)
+        broadcast!(prob_func, probs, Ref(improb), gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
@@ -113,6 +114,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
     update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
 
     improb = make_prob_compatible(prob)
+    probs = similar(gpu_particles, typeof(improb), (length(gpu_particles),))
 
     for i in 1:maxiters
         update_states!(gpu_particles,
@@ -124,7 +126,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        probs = prob_func.(Ref(improb), gpu_particles)
+        broadcast!(prob_func, probs, Ref(improb), gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
@@ -152,3 +154,4 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
     end
     return gbest
 end
+
