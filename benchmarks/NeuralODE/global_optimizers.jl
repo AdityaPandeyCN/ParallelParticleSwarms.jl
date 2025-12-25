@@ -2,12 +2,18 @@ using Pkg
 
 Pkg.activate(@__DIR__)
 
-using SimpleChains,
-      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationOptimisers
-
+using SimpleChains, StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization
+using OptimizationOptimisers
+using OptimizationOptimJL
+using OptimizationSciPy
+using ParallelParticleSwarms
 using CUDA
+using KernelAbstractions
+using Adapt
+using Random
+
 device!(0)
-# Get Tesla V100S
+
 u0 = @SArray Float32[2.0, 0.0]
 datasize = 30
 tspan = (0.0f0, 1.5f0)
@@ -26,21 +32,15 @@ sc = SimpleChain(static(2),
     TurboDense{true}(tanh, static(2)),
     TurboDense{true}(identity, static(2)))
 
-using Random
 rng = Random.default_rng()
 Random.seed!(rng, 0)
-
 p_nn = SimpleChains.init_params(sc; rng)
 
 f(u, p, t) = sc(u, p)
-
 sprob_nn = ODEProblem(f, u0, tspan)
 
 function predict_neuralode(p)
-    Array(solve(sprob_nn,
-        Tsit5();
-        p = p,
-        saveat = tsteps,
+    Array(solve(sprob_nn, Tsit5(); p = p, saveat = tsteps,
         sensealg = QuadratureAdjoint(autojacvec = ZygoteVJP())))
 end
 
@@ -50,41 +50,23 @@ function loss_neuralode(p)
     return loss, pred
 end
 
-callback = function (p, l, pred; doplot = true)
-    display(l)
-    plt = scatter(tsteps, data[1, :], label = "data")
-    scatter!(plt, tsteps, pred[1, :], label = "prediction")
-    if doplot
-        display(plot(plt))
-    end
-    return false
-end
-
-optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x)[1],
-    Optimization.AutoZygote())
+optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x)[1], Optimization.AutoZygote())
 optprob = Optimization.OptimizationProblem(optf, p_nn)
 
-@time res_adam = Optimization.solve(optprob, ADAM(0.05), maxiters = 100)
+println("=" ^ 60)
+println("NEURAL ODE BENCHMARK")
+println("=" ^ 60)
+
+@info "Adam (100 iters)"
+@time res_adam = Optimization.solve(optprob, Adam(0.05), maxiters = 100)
 @show res_adam.objective
 
-using BenchmarkTools
-
-@benchmark Optimization.solve(optprob, ADAM(0.05), maxiters = 100)
-
-## Evaluate the perf of LBFGS
-
-using OptimizationOptimJL
-
+@info "LBFGS (100 iters)"
 moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
-
 @time res_lbfgs = Optimization.solve(moptprob, LBFGS(), maxiters = 100)
 @show res_lbfgs.objective
 
-@benchmark Optimization.solve(moptprob, LBFGS(), maxiters = 100)
-
-## Evaluate SciPy global optimizers
-
-using OptimizationSciPy
+## SciPy global optimizers
 
 function loss_scipy(u, _)
     u32 = Float32.(u)
@@ -95,57 +77,44 @@ end
 lb_scipy = fill(-10.0, length(p_nn))
 ub_scipy = fill(10.0, length(p_nn))
 x0_scipy = Float64.(p_nn)
-
 scipy_prob = OptimizationProblem(loss_scipy, x0_scipy; lb = lb_scipy, ub = ub_scipy)
 
+@info "SciPy DE (maxiters=200)"
 @time sol_de = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDifferentialEvolution(), maxiters = 200)
 @show sol_de.objective
 
-@benchmark Optimization.solve($scipy_prob, OptimizationSciPy.ScipyDifferentialEvolution(), maxiters = 200)
-
+@info "SciPy DualAnnealing (maxiters=200)"
 @time sol_da = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDualAnnealing(), maxiters = 200)
 @show sol_da.objective
 
-@benchmark Optimization.solve($scipy_prob, OptimizationSciPy.ScipyDualAnnealing(), maxiters = 200)
-
-## ParallelParticleSwarms stuff
+## GPU-PSO
 
 function nn_fn(u::T, p, t)::T where {T}
     nn, ps = p
     return nn(u, ps)
 end
 
-nn = (u, p, t) -> sc(u, p)
-
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-prob_nn = ODEProblem(nn_fn, u0, tspan, (sc, p_static))
+# KEY FIX: Use FullSpecialize so remake doesn't change the type
+prob_nn = ODEProblem{false, SciMLBase.FullSpecialize}(nn_fn, u0, tspan, (sc, p_static))
 
 n_particles = 10_000
+backend = CUDABackend()
 
-function loss(u, p)
+function loss_pso(u, p)
     odeprob, t = p
-    prob = remake(odeprob; p = (odeprob.p[1], u))
-    pred = Array(solve(prob, Tsit5(), saveat = t))
+    _prob = remake(odeprob; p = (odeprob.p[1], u))
+    pred = Array(solve(_prob, Tsit5(), saveat = t))
     sum(abs2, data .- pred)
 end
 
-lb = @SArray fill(Float32(-Inf), length(p_static))
-ub = @SArray fill(Float32(Inf), length(p_static))
+lb = @SArray fill(Float32(-10.0), length(p_static))
+ub = @SArray fill(Float32(10.0), length(p_static))
 
-soptprob = OptimizationProblem(loss, prob_nn.p[2], (prob_nn, tsteps); lb = lb, ub = ub)
-
-using ParallelParticleSwarms
-using CUDA
-using KernelAbstractions
-using Adapt
-
-backend = CUDABackend()
-
-## Initialize Particles
+soptprob = OptimizationProblem(loss_pso, prob_nn.p[2], (prob_nn, tsteps); lb = lb, ub = ub)
 
 Random.seed!(rng, 0)
-
 opt = ParallelPSOKernel(n_particles)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 
@@ -156,65 +125,27 @@ gpu_data = adapt(backend,
 CUDA.allowscalar(false)
 
 function prob_func(prob, gpu_particle)
-    return remake(prob, p = (prob.p[1], gpu_particle.position))::typeof(prob)
+    return remake(prob, p = (prob.p[1], gpu_particle.position))
 end
 
 gpu_particles = adapt(backend, particles)
-
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
-
 solver_cache = (; losses, gpu_particles, gpu_data, gbest)
 
-adaptive = true
-
+@info "GPU-PSO (n_particles=10_000, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(prob_nn,
-    solver_cache,
-    lb,
-    ub, Val(adaptive);
-    saveat = tsteps,
-    dt = 0.1f0,
-    prob_func = prob_func,
-    maxiters = 100)
-
-@benchmark ParallelParticleSwarms.parameter_estim_ode!($prob_nn,
-    $(deepcopy(solver_cache)),
-    $lb,
-    $ub, Val(adaptive);
-    saveat = tsteps,
-    dt = 0.1f0,
-    prob_func = prob_func,
-    maxiters = 100)
+    solver_cache, lb, ub, Val(true);
+    saveat = tsteps, dt = 0.1f0, prob_func = prob_func, maxiters = 100)
 
 @show gsol.cost
 
-#using Plots
-
-function predict_neuralode(p)
-    Array(solve(prob_nn, Tsit5(); p = p, saveat = tsteps))
-end
-
-#plt = scatter(tsteps,
-    data[1, :],
-    label = "data",
-    ylabel = "u(t)",
-    xlabel = "t",
-    linewidth = 4,
-    title = "Optimizers performance after 100 iterations")
-
-#pred_pso = predict_neuralode((sc, gsol.position))
-#scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
-
-#pred_adam = predict_neuralode((sc, res_adam.u))
-#scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
-
-#pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
-#scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
-
-#pred_scipy_de = predict_neuralode((sc, Float32.(sol_de.u)))
-#scatter!(plt, tsteps, pred_scipy_de[1, :], label = "scipy DE prediction", markershape = :diamond)
-
-#pred_scipy_da = predict_neuralode((sc, Float32.(sol_da.u)))
-#scatter!(plt, tsteps, pred_scipy_da[1, :], label = "scipy DA prediction", markershape = :hexagon)
-
-#savefig("neural_ode.svg")
+println("\n" * "=" ^ 60)
+println("RESULTS SUMMARY")
+println("=" ^ 60)
+println("Adam:                $(res_adam.objective)")
+println("L-BFGS:              $(res_lbfgs.objective)")
+println("scipy DE:            $(sol_de.objective)")
+println("scipy DualAnnealing: $(sol_da.objective)")
+println("GPU-PSO:             $(gsol.cost)")
+println("=" ^ 60)
 
