@@ -3,13 +3,13 @@ Pkg.activate(@__DIR__)
 
 using SimpleChains, StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization
 using OptimizationOptimisers
+using Optimisers: Adam
 using OptimizationOptimJL
 using ParallelParticleSwarms
 using CUDA
 using KernelAbstractions
 using Adapt
 using Random
-using BenchmarkTools
 
 device!(0)
 
