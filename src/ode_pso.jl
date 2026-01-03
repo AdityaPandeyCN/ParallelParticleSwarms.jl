@@ -70,11 +70,11 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        probs = prob_func.(Ref(improb), gpu_particles)
+        # CPU fallback: remake() can't compile for GPU
+        cpu_particles = Array(gpu_particles)
+        probs = prob_func.(Ref(improb), cpu_particles)
 
         KernelAbstractions.synchronize(backend)
-
-        ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
         ts, us = vectorized_asolve(probs,
             prob,
@@ -82,7 +82,10 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+        # Convert results back to GPU
+        us_gpu = adapt(backend, us)
+
+        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
 
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
@@ -124,11 +127,11 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        probs = prob_func.(Ref(improb), gpu_particles)
+        # CPU fallback: remake() can't compile for GPU
+        cpu_particles = Array(gpu_particles)
+        probs = prob_func.(Ref(improb), cpu_particles)
 
         KernelAbstractions.synchronize(backend)
-
-        ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
         ts, us = vectorized_solve(probs,
             prob,
@@ -136,7 +139,10 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+        # Convert results back to GPU
+        us_gpu = adapt(backend, us)
+
+        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
 
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
@@ -152,3 +158,4 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
     end
     return gbest
 end
+
