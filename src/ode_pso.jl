@@ -70,7 +70,8 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        # CPU fallback: remake() can't compile for GPU
+        # Copy particles to CPU because remake() uses dynamic dispatch 
+        # which can't compile for GPU
         cpu_particles = Array(gpu_particles)
         probs = prob_func.(Ref(improb), cpu_particles)
 
@@ -82,7 +83,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        # Convert results back to GPU
+        # Convert results back to GPU for loss computation
         us_gpu = adapt(backend, us)
 
         sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
@@ -127,7 +128,8 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        # CPU fallback: remake() can't compile for GPU
+        # Copy particles to CPU because remake() uses dynamic dispatch 
+        # which can't compile for GPU
         cpu_particles = Array(gpu_particles)
         probs = prob_func.(Ref(improb), cpu_particles)
 
@@ -139,7 +141,7 @@ function parameter_estim_ode!(prob::ODEProblem, cache,
 
         KernelAbstractions.synchronize(backend)
 
-        # Convert results back to GPU
+        # Convert results back to GPU for loss computation
         us_gpu = adapt(backend, us)
 
         sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
