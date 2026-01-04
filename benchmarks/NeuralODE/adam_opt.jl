@@ -2,14 +2,17 @@ using Pkg
 
 Pkg.activate(@__DIR__)
 
+# OptimizationFlux was renamed to OptimizationOptimisers
 using SimpleChains,
-      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationOptimisers
+      StaticArrays, OrdinaryDiffEq, SciMLSensitivity, Optimization, OptimizationOptimisers,
+      Plots
+
+# Adam optimizer now comes from Optimisers.jl
 using Optimisers: Adam
-# using Plots  # Commented out - causes OpenGL error on headless servers
 
 using CUDA
 device!(0)
-# Get Tesla V100S
+
 u0 = @SArray Float32[2.0, 0.0]
 datasize = 30
 tspan = (0.0f0, 1.5f0)
@@ -54,24 +57,26 @@ end
 
 callback = function (p, l, pred; doplot = true)
     display(l)
-    # plt = scatter(tsteps, data[1, :], label = "data")
-    # scatter!(plt, tsteps, pred[1, :], label = "prediction")
-    # if doplot
-    #     display(plot(plt))
-    # end
+    plt = scatter(tsteps, data[1, :], label = "data")
+    scatter!(plt, tsteps, pred[1, :], label = "prediction")
+    if doplot
+        display(plot(plt))
+    end
     return false
 end
 
-optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x),
+# Extract scalar loss with [1] for gradient computation
+optf = Optimization.OptimizationFunction((x, p) -> loss_neuralode(x)[1],
     Optimization.AutoZygote())
 optprob = Optimization.OptimizationProblem(optf, p_nn)
 
+# ADAM was renamed to Adam
 @time res_adam = Optimization.solve(optprob, Adam(0.05), maxiters = 100)
 @show res_adam.objective
 
 using BenchmarkTools
 
-# @benchmark Optimization.solve(optprob, Adam(0.05), maxiters = 100)
+@benchmark Optimization.solve(optprob, Adam(0.05), maxiters = 100)
 
 ## Evaluate the perf of LBFGS
 
@@ -82,7 +87,7 @@ moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
 @time res_lbfgs = Optimization.solve(moptprob, LBFGS(), maxiters = 100)
 @show res_lbfgs.objective
 
-# @benchmark Optimization.solve(moptprob, LBFGS(), maxiters = 100)
+@benchmark Optimization.solve(moptprob, LBFGS(), maxiters = 100)
 
 ## ParallelParticleSwarms stuff
 
@@ -95,6 +100,7 @@ nn = (u, p, t) -> sc(u, p)
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
+# Use FullSpecialize for GPU compatibility with remake()
 prob_nn = ODEProblem{false, SciMLBase.FullSpecialize}(nn_fn, u0, tspan, (sc, p_static))
 
 n_particles = 10_000
@@ -128,6 +134,7 @@ backend = CUDABackend()
 Random.seed!(rng, 0)
 
 opt = ParallelPSOKernel(n_particles)
+# Use typeof(p_static) to match particle position type
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 
 gpu_data = adapt(backend,
@@ -157,41 +164,41 @@ adaptive = true
     prob_func = prob_func,
     maxiters = 100)
 
-# @benchmark ParallelParticleSwarms.parameter_estim_ode!($prob_nn,
-#     $(deepcopy(solver_cache)),
-#     $lb,
-#     $ub, Val(adaptive);
-#     saveat = tsteps,
-#     dt = 0.1f0,
-#     prob_func = prob_func,
-#     maxiters = 100)
+@benchmark ParallelParticleSwarms.parameter_estim_ode!($prob_nn,
+    $(deepcopy(solver_cache)),
+    $lb,
+    $ub, Val(adaptive);
+    saveat = tsteps,
+    dt = 0.1f0,
+    prob_func = prob_func,
+    maxiters = 100)
 
 @show gsol.cost
 
-# using Plots
-# 
-# function predict_neuralode(p)
-#     Array(solve(prob_nn, Tsit5(); p = p, saveat = tsteps))
-# end
-# 
-# plt = scatter(tsteps,
-#     data[1, :],
-#     label = "data",
-#     ylabel = "u(t)",
-#     xlabel = "t",
-#     linewidth = 4,
-#     title = "Optimizers performance after 100 iterations")
-# 
-# pred_pso = predict_neuralode((sc, gsol.position))
-# scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
-# 
-# pred_adam = predict_neuralode((sc, res_adam.u))
-# scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
-# 
-# pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
-# scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
-# 
-# savefig("neural_ode.svg")
+using Plots
+
+function predict_neuralode(p)
+    Array(solve(prob_nn, Tsit5(); p = p, saveat = tsteps))
+end
+
+plt = scatter(tsteps,
+    data[1, :],
+    label = "data",
+    ylabel = "u(t)",
+    xlabel = "t",
+    linewidth = 4,
+    title = "Optimizers performance after 100 iterations")
+
+pred_pso = predict_neuralode((sc, gsol.position))
+scatter!(plt, tsteps, pred_pso[1, :], label = "PSO prediction", markershape = :star5)
+
+pred_adam = predict_neuralode((sc, res_adam.u))
+scatter!(plt, tsteps, pred_adam[1, :], label = "ADAM prediction", markershape = :xcross)
+
+pred_lbfgs = predict_neuralode((sc, res_lbfgs.u))
+scatter!(plt, tsteps, pred_lbfgs[1, :], label = "LBFGS prediction", markershape = :cross)
+
+savefig("neural_ode.svg")
 
 # plt = plot(data[1, :], data[2, :], label = "data")
 
