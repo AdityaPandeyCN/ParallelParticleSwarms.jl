@@ -1,4 +1,4 @@
-@kernel function _update_particle_states!(
+@kernel function ode_update_particle_states!(
         gpu_particles, lb, ub, gbest, w; c1 = 1.4962f0,
         c2 = 1.4962f0
     )
@@ -28,7 +28,7 @@
     end
 end
 
-@kernel function _update_particle_costs!(losses, gpu_particles)
+@kernel function ode_update_particle_costs!(losses, gpu_particles)
     i = @index(Global, Linear)
     if i <= length(losses)
         @inbounds particle = gpu_particles[i]
@@ -46,17 +46,18 @@ end
 end
 
 @kernel function ode_update_probs!(
-    probs,
+    probs::AbstractVector{TProb},
     gpu_particles,
     @Const(f),
     @Const(u0),
     @Const(tspan),
     @Const(pt),
     @Const(nn),
-)
+) where {TProb}
     i = @index(Global, Linear)
     if i <= length(probs)
-        @inbounds probs[i] = SciMLBase.ImmutableODEProblem(
+        # Construct the *exact* element type to avoid device-side dynamic `convert`.
+        @inbounds probs[i] = TProb(
             f,
             u0,
             tspan,
@@ -82,8 +83,8 @@ function parameter_estim_ode!(
     )
     (losses, gpu_particles, gpu_data, gbest) = cache
     backend = get_backend(gpu_particles)
-    update_states! = ParallelParticleSwarms._update_particle_states!(backend)
-    update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
+    update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
+    update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
     update_probs! = ParallelParticleSwarms.ode_update_probs!(backend)
 
     improb = make_prob_compatible(prob)
@@ -152,8 +153,8 @@ function parameter_estim_ode!(
     )
     (losses, gpu_particles, gpu_data, gbest) = cache
     backend = get_backend(gpu_particles)
-    update_states! = ParallelParticleSwarms._update_particle_states!(backend)
-    update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
+    update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
+    update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
     update_probs! = ParallelParticleSwarms.ode_update_probs!(backend)
 
     improb = make_prob_compatible(prob)
