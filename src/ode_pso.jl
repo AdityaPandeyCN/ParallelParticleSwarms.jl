@@ -45,6 +45,27 @@ end
     end
 end
 
+@kernel function ode_update_probs!(
+    probs,
+    gpu_particles,
+    @Const(f),
+    @Const(u0),
+    @Const(tspan),
+    @Const(pt),
+    @Const(nn),
+)
+    i = @index(Global, Linear)
+    if i <= length(probs)
+        @inbounds probs[i] = SciMLBase.ImmutableODEProblem(
+            f,
+            u0,
+            tspan,
+            (nn, gpu_particles[i].position),
+            pt,
+        )
+    end
+end
+
 function default_prob_func(prob, gpu_particle)
     return remake(prob, p = gpu_particle.position)
 end
@@ -63,8 +84,10 @@ function parameter_estim_ode!(
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms._update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
+    update_probs! = ParallelParticleSwarms.ode_update_probs!(backend)
 
     improb = make_prob_compatible(prob)
+    probs = similar(gpu_particles, typeof(improb))
 
     for i in 1:maxiters
         update_states!(
@@ -78,9 +101,16 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        # Copy particles to CPU
-        cpu_particles = Array(gpu_particles)
-        probs = prob_func.(Ref(improb), cpu_particles)
+        update_probs!(
+            probs,
+            gpu_particles,
+            improb.f,
+            improb.u0,
+            improb.tspan,
+            improb.kwargs,
+            improb.p[1];
+            ndrange = length(probs),
+        )
 
         KernelAbstractions.synchronize(backend)
 
@@ -92,10 +122,7 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        # Convert results back to GPU for loss computation
-        us_gpu = adapt(backend, us)
-
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
+        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
 
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
@@ -127,8 +154,10 @@ function parameter_estim_ode!(
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms._update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms._update_particle_costs!(backend)
+    update_probs! = ParallelParticleSwarms.ode_update_probs!(backend)
 
     improb = make_prob_compatible(prob)
+    probs = similar(gpu_particles, typeof(improb))
 
     for i in 1:maxiters
         update_states!(
@@ -142,9 +171,16 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        # Copy particles to CPU
-        cpu_particles = Array(gpu_particles)
-        probs = prob_func.(Ref(improb), cpu_particles)
+        update_probs!(
+            probs,
+            gpu_particles,
+            improb.f,
+            improb.u0,
+            improb.tspan,
+            improb.kwargs,
+            improb.p[1];
+            ndrange = length(probs),
+        )
 
         KernelAbstractions.synchronize(backend)
 
@@ -156,10 +192,7 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        # Convert results back to GPU for loss computation
-        us_gpu = adapt(backend, us)
-
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us_gpu)))
+        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
 
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
