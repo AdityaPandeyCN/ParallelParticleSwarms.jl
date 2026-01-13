@@ -6,9 +6,10 @@ using SimpleChains,
 using OptimizationOptimisers
 using Optimisers: Adam
 using OptimizationOptimJL
-using OptimizationSciPy
+using SciMLBase: ImmutableODEProblem
 
 using ParallelParticleSwarms
+using DiffEqGPU
 using CUDA
 using KernelAbstractions
 using Adapt
@@ -18,7 +19,7 @@ using Setfield
 device!(0)
 
 println("=" ^ 60)
-println("NEURAL ODE BENCHMARK")
+println("NEURAL ODE BENCHMARK - ImmutableODEProblem Approach")
 println("=" ^ 60)
 
 u0 = @SArray Float32[2.0, 0.0]
@@ -75,27 +76,9 @@ moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
 @time res_lbfgs = Optimization.solve(moptprob, LBFGS(), maxiters = 100)
 @show res_lbfgs.objective
 
-function loss_scipy(u, _)
-    u32 = Float32.(u)
-    pred = Array(solve(sprob_nn, Tsit5(); p = u32, saveat = tsteps))
-    return sum(abs2, data .- pred)
-end
+## GPU-PSO with ImmutableODEProblem
 
-lb_scipy = fill(-10.0, length(p_nn))
-ub_scipy = fill(10.0, length(p_nn))
-x0_scipy = Float64.(p_nn)
-scipy_prob = OptimizationProblem(loss_scipy, x0_scipy; lb = lb_scipy, ub = ub_scipy)
-
-@info "SciPy DE (maxiters=200)"
-@time sol_de = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDifferentialEvolution(), maxiters = 200)
-@show sol_de.objective
-
-@info "SciPy DualAnnealing (maxiters=200)"
-@time sol_da = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDualAnnealing(), maxiters = 200)
-@show sol_da.objective
-
-## GPU-PSO
-
+# Neural ODE function - must be type-stable
 function nn_fn(u::T, p, t)::T where {T}
     nn, ps = p
     return nn(u, ps)
@@ -103,22 +86,22 @@ end
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-prob_nn = ODEProblem{false, SciMLBase.FullSpecialize}(nn_fn, u0, tspan, (sc, p_static))
+# Use ImmutableODEProblem for GPU compatibility
+# This avoids dynamic dispatch issues with remake()
+prob_nn = ImmutableODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
 
 n_particles = 10_000
 backend = CUDABackend()
 
+# Dummy loss for OptimizationProblem (only used for init_particles bounds)
 function loss_pso(u, p)
-    odeprob, t = p
-    _prob = remake(odeprob; p = (odeprob.p[1], u))
-    pred = Array(solve(_prob, Tsit5(), saveat = t))
-    return sum(abs2, data .- pred)
+    return zero(eltype(u))
 end
 
 lb = @SArray fill(Float32(-10.0), length(p_static))
 ub = @SArray fill(Float32(10.0), length(p_static))
 
-soptprob = OptimizationProblem(loss_pso, prob_nn.p[2], (prob_nn, tsteps); lb = lb, ub = ub)
+soptprob = OptimizationProblem(loss_pso, p_static, nothing; lb = lb, ub = ub)
 
 Random.seed!(rng, 0)
 opt = ParallelPSOKernel(n_particles)
@@ -127,8 +110,8 @@ gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p
 gpu_data = adapt(
     backend,
     [
-        SVector{length(prob_nn.u0), eltype(prob_nn.u0)}(@view data[:, i])
-            for i in 1:length(tsteps)
+        SVector{length(u0), eltype(u0)}(@view data[:, i])
+        for i in 1:length(tsteps)
     ]
 )
 
@@ -137,12 +120,11 @@ CUDA.allowscalar(false)
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
 
-# Create probs array - use remake to get correct type
-improb = ParallelParticleSwarms.make_prob_compatible(prob_nn)
-init_prob = remake(improb, p = (sc, particles[1].position))
-probs = CuArray(fill(init_prob, n_particles))
+# Pre-allocate problems array on GPU
+# Initialize with the base ImmutableODEProblem
+probs = adapt(backend, fill(prob_nn, n_particles))
 
-# Cache: 6 elements (includes probs and nn for kernel)
+# Cache: 6 elements (losses, gpu_particles, gpu_data, gbest, probs, nn)
 solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs, nn = sc)
 
 @info "GPU-PSO Warmup (compilation)"
@@ -157,8 +139,7 @@ Random.seed!(rng, 0)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
-init_prob = remake(improb, p = (sc, particles[1].position))
-probs = CuArray(fill(init_prob, n_particles))
+probs = adapt(backend, fill(prob_nn, n_particles))
 solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs, nn = sc)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
@@ -173,9 +154,9 @@ solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs, nn = sc)
 println("\n" * "=" ^ 60)
 println("RESULTS SUMMARY")
 println("=" ^ 60)
-println("Adam:                $(res_adam.objective)")
-println("L-BFGS:              $(res_lbfgs.objective)")
-println("SciPy DE:            $(sol_de.objective)")
-println("SciPy DualAnnealing: $(sol_da.objective)")
-println("GPU-PSO:             $(gsol.cost)")
+println("Adam:    $(res_adam.objective)")
+println("L-BFGS:  $(res_lbfgs.objective)")
+println("GPU-PSO: $(gsol.cost)")
 println("=" ^ 60)
+
+
