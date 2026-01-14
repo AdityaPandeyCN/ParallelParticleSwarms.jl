@@ -116,11 +116,8 @@ CUDA.allowscalar(false)
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
 
-# Pre-allocate probs array
-probs = adapt(backend, fill(prob_nn, n_particles))
-
-# Cache: 5 elements
-solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
+# Cache: 4 elements
+solver_cache = (; losses, gpu_particles, gpu_data, gbest)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
@@ -134,8 +131,7 @@ Random.seed!(rng, 0)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
-probs = adapt(backend, fill(prob_nn, n_particles))
-solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
+    solver_cache = (; losses, gpu_particles, gpu_data, gbest)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
