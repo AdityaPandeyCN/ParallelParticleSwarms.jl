@@ -78,7 +78,6 @@ moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
 
 ## GPU-PSO with ImmutableODEProblem
 
-# Neural ODE function - must be type-stable
 function nn_fn(u::T, p, t)::T where {T}
     nn, ps = p
     return nn(u, ps)
@@ -86,14 +85,11 @@ end
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-# Use ImmutableODEProblem for GPU compatibility
-# This avoids dynamic dispatch issues with remake()
 prob_nn = ImmutableODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
 
 n_particles = 10_000
 backend = CUDABackend()
 
-# Dummy loss for OptimizationProblem (only used for init_particles bounds)
 function loss_pso(u, p)
     return zero(eltype(u))
 end
@@ -120,12 +116,11 @@ CUDA.allowscalar(false)
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
 
-# Pre-allocate problems array on GPU
-# Initialize with the base ImmutableODEProblem
+# Pre-allocate probs array
 probs = adapt(backend, fill(prob_nn, n_particles))
 
-# Cache: 6 elements (losses, gpu_particles, gpu_data, gbest, probs, nn)
-solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs, nn = sc)
+# Cache: 5 elements
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
@@ -140,7 +135,7 @@ gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
 probs = adapt(backend, fill(prob_nn, n_particles))
-solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs, nn = sc)
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
@@ -158,5 +153,4 @@ println("Adam:    $(res_adam.objective)")
 println("L-BFGS:  $(res_lbfgs.objective)")
 println("GPU-PSO: $(gsol.cost)")
 println("=" ^ 60)
-
 
