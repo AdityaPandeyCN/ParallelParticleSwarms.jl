@@ -170,6 +170,8 @@ for i in 1:maxiters
     )
     w = w * wdamp
 end
+return gbest
+end
 
 function parameter_estim_ode!(
     prob::SciMLBase.ImmutableODEProblem, cache,
@@ -191,7 +193,5 @@ function parameter_estim_ode!(
         maxiters = maxiters,
         kwargs...
     )
-end
-return gbest
 end
 
