@@ -170,6 +170,28 @@ for i in 1:maxiters
     )
     w = w * wdamp
 end
+
+function parameter_estim_ode!(
+    prob::SciMLBase.ImmutableODEProblem, cache,
+    lb,
+    ub, ::Val{B}; ode_alg = GPUTsit5(), prob_func = default_prob_func,
+    w = 0.7298f0, wdamp = 1.0f0, maxiters = 100, kwargs...
+) where {B}
+    mutable_prob = ODEProblem(prob.f, prob.u0, prob.tspan, prob.p)
+    return parameter_estim_ode!(
+        mutable_prob,
+        cache,
+        lb,
+        ub,
+        Val{B}();
+        ode_alg = ode_alg,
+        prob_func = prob_func,
+        w = w,
+        wdamp = wdamp,
+        maxiters = maxiters,
+        kwargs...
+    )
+end
 return gbest
 end
 
