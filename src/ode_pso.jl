@@ -79,7 +79,9 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    probs .= prob_func.(improb, gpu_particles)
+    @inbounds for idx in 1:length(gpu_particles)
+        probs[idx] = prob_func(improb, gpu_particles[idx])
+    end
 
     KernelAbstractions.synchronize(backend)
 
@@ -141,7 +143,9 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    probs .= prob_func.(improb, gpu_particles)
+    @inbounds for idx in 1:length(gpu_particles)
+        probs[idx] = prob_func(improb, gpu_particles[idx])
+    end
 
     KernelAbstractions.synchronize(backend)
 
