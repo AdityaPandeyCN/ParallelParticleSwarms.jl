@@ -121,8 +121,11 @@ end
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), n_particles))
 
-# Cache: 4 elements
-solver_cache = (; losses, gpu_particles, gpu_data, gbest)
+# Pre-allocate probs
+probs = fill(mutable_prob_nn, n_particles)
+
+# Cache: 5 elements (with probs)
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
@@ -137,7 +140,8 @@ Random.seed!(rng, 0)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), n_particles))
-    solver_cache = (; losses, gpu_particles, gpu_data, gbest)
+probs = fill(mutable_prob_nn, n_particles)
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(

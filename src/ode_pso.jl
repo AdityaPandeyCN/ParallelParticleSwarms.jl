@@ -8,22 +8,17 @@ if i <= length(gpu_particles)
 
     updated_velocity = w .* particle.velocity .+
         c1 .* rand(typeof(particle.velocity)) .*
-        (
-        particle.best_position -
-            particle.position
-    ) .+
+        (particle.best_position - particle.position) .+
         c2 .* rand(typeof(particle.velocity)) .*
         (gbest.position - particle.position)
 
     @set! particle.velocity = updated_velocity
-
     @set! particle.position = particle.position + particle.velocity
 
     update_pos = max(particle.position, lb)
     update_pos = min(update_pos, ub)
 
     @set! particle.position = update_pos
-
     @inbounds gpu_particles[i] = particle
 end
 end
@@ -59,13 +54,12 @@ function parameter_estim_ode!(
     wdamp = 1.0f0,
     maxiters = 100, kwargs...
 )
-(losses, gpu_particles, gpu_data, gbest) = cache
+(losses, gpu_particles, gpu_data, gbest, probs) = cache  # probs from cache
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
 
-improb = make_prob_compatible(prob)
-probs = Vector{typeof(improb)}(undef, length(gpu_particles))
+# No probs allocation here - it comes from cache
 
 for i in 1:maxiters
     update_states!(
@@ -80,10 +74,6 @@ for i in 1:maxiters
     KernelAbstractions.synchronize(backend)
 
     probs = prob_func.(probs, gpu_particles)
-
-    KernelAbstractions.synchronize(backend)
-
-    ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
     ts, us = vectorized_asolve(
         probs,
@@ -121,13 +111,12 @@ function parameter_estim_ode!(
     wdamp = 1.0f0,
     maxiters = 100, kwargs...
 )
-(losses, gpu_particles, gpu_data, gbest) = cache
+(losses, gpu_particles, gpu_data, gbest, probs) = cache  # probs from cache
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
 
-improb = make_prob_compatible(prob)
-probs = Vector{typeof(improb)}(undef, length(gpu_particles))
+# No probs allocation here - it comes from cache
 
 for i in 1:maxiters
     update_states!(
@@ -142,10 +131,6 @@ for i in 1:maxiters
     KernelAbstractions.synchronize(backend)
 
     probs = prob_func.(probs, gpu_particles)
-
-    KernelAbstractions.synchronize(backend)
-
-    ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
     ts, us = vectorized_solve(
         probs,
