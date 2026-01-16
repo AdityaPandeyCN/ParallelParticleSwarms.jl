@@ -54,12 +54,10 @@ function parameter_estim_ode!(
     wdamp = 1.0f0,
     maxiters = 100, kwargs...
 )
-(losses, gpu_particles, gpu_data, gbest, probs) = cache  # probs from cache
+(losses, gpu_particles, gpu_data, gbest) = cache
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
-
-# No probs allocation here - it comes from cache
 
 for i in 1:maxiters
     update_states!(
@@ -73,13 +71,19 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    probs = prob_func.(probs, gpu_particles)
-
-    ts, us = vectorized_asolve(
-        probs,
-        prob,
-        ode_alg; kwargs...
+    params = getfield.(gpu_particles, :position)
+    ensemble_prob = EnsembleProblem(
+        prob;
+        prob_func = (prob, i, repeat) -> prob_func(prob, params[i])
     )
+    sol = solve(
+        ensemble_prob,
+        ode_alg,
+        EnsembleGPUKernel();
+        trajectories = length(gpu_particles),
+        kwargs...
+    )
+    us = sol.u
 
     KernelAbstractions.synchronize(backend)
 
@@ -111,12 +115,10 @@ function parameter_estim_ode!(
     wdamp = 1.0f0,
     maxiters = 100, kwargs...
 )
-(losses, gpu_particles, gpu_data, gbest, probs) = cache  # probs from cache
+(losses, gpu_particles, gpu_data, gbest) = cache
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
-
-# No probs allocation here - it comes from cache
 
 for i in 1:maxiters
     update_states!(
@@ -130,13 +132,19 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    probs = prob_func.(probs, gpu_particles)
-
-    ts, us = vectorized_solve(
-        probs,
-        prob,
-        ode_alg; kwargs...
+    params = getfield.(gpu_particles, :position)
+    ensemble_prob = EnsembleProblem(
+        prob;
+        prob_func = (prob, i, repeat) -> prob_func(prob, params[i])
     )
+    sol = solve(
+        ensemble_prob,
+        ode_alg,
+        EnsembleGPUKernel();
+        trajectories = length(gpu_particles),
+        kwargs...
+    )
+    us = sol.u
 
     KernelAbstractions.synchronize(backend)
 
