@@ -92,7 +92,7 @@ for i in 1:maxiters
 
     ts, us = vectorized_asolve(
         probs,
-        prob,
+        improb,
         ode_alg; kwargs...
     )
 
@@ -166,7 +166,7 @@ for i in 1:maxiters
 
     ts, us = vectorized_solve(
         probs,
-        prob,
+        improb,
         ode_alg; kwargs...
     )
 
