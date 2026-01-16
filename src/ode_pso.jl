@@ -63,9 +63,11 @@ function parameter_estim_ode!(
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
+data_host = Array(gpu_data)
+loss_values = Vector{Float32}(undef, length(gpu_particles))
 
-improb = make_prob_compatible(prob)
-probs = Vector{typeof(improb)}(undef, length(gpu_particles))
+    improb = make_prob_compatible(prob)
+    probs = Vector{typeof(improb)}(undef, length(gpu_particles))
 
 for i in 1:maxiters
     update_states!(
@@ -79,8 +81,9 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    @inbounds for idx in 1:length(gpu_particles)
-        probs[idx] = prob_func(improb, gpu_particles[idx])
+    host_particles = Array(gpu_particles)
+    @inbounds for (idx, particle) in enumerate(host_particles)
+        probs[idx] = prob_func(improb, particle)
     end
 
     KernelAbstractions.synchronize(backend)
@@ -95,7 +98,14 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+    host_us = Array(us)
+    @inbounds for p in 1:length(gpu_particles)
+        loss_values[p] = sum(
+            sum(abs2, data_host[k] - host_us[k, p])
+            for k in 1:length(data_host)
+        )
+    end
+    copyto!(losses, loss_values)
 
     update_costs!(losses, gpu_particles; ndrange = length(losses))
 
@@ -127,9 +137,11 @@ function parameter_estim_ode!(
 backend = get_backend(gpu_particles)
 update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
 update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
+data_host = Array(gpu_data)
+loss_values = Vector{Float32}(undef, length(gpu_particles))
 
-improb = make_prob_compatible(prob)
-probs = Vector{typeof(improb)}(undef, length(gpu_particles))
+    improb = make_prob_compatible(prob)
+    probs = Vector{typeof(improb)}(undef, length(gpu_particles))
 
 for i in 1:maxiters
     update_states!(
@@ -143,8 +155,9 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    @inbounds for idx in 1:length(gpu_particles)
-        probs[idx] = prob_func(improb, gpu_particles[idx])
+    host_particles = Array(gpu_particles)
+    @inbounds for (idx, particle) in enumerate(host_particles)
+        probs[idx] = prob_func(improb, particle)
     end
 
     KernelAbstractions.synchronize(backend)
@@ -159,7 +172,14 @@ for i in 1:maxiters
 
     KernelAbstractions.synchronize(backend)
 
-    sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+    host_us = Array(us)
+    @inbounds for p in 1:length(gpu_particles)
+        loss_values[p] = sum(
+            sum(abs2, data_host[k] - host_us[k, p])
+            for k in 1:length(data_host)
+        )
+    end
+    copyto!(losses, loss_values)
 
     update_costs!(losses, gpu_particles; ndrange = length(losses))
 

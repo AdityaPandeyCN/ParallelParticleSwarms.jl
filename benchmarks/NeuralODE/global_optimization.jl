@@ -86,6 +86,7 @@ end
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
 prob_nn = ImmutableODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
+mutable_prob_nn = ODEProblem(nn_fn, u0, tspan, (sc, p_static))
 
 n_particles = 10_000
 backend = CUDABackend()
@@ -113,31 +114,37 @@ gpu_data = adapt(
 
 CUDA.allowscalar(false)
 
+function prob_func(prob, gpu_particle)
+    return remake(prob, p = (prob.p[1], gpu_particle.position))
+end
+
 gpu_particles = adapt(backend, particles)
-losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
+losses = adapt(backend, ones(eltype(prob.u0), n_particles))
 
 # Cache: 4 elements
 solver_cache = (; losses, gpu_particles, gpu_data, gbest)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    prob_nn,
+    mutable_prob_nn,
     solver_cache, lb, ub, Val(true);
-    saveat = tsteps, dt = 0.1f0, maxiters = 10
+    saveat = tsteps, dt = 0.1f0, maxiters = 10,
+    prob_func = prob_func
 )
 
 # Reset for fair benchmark
 Random.seed!(rng, 0)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 gpu_particles = adapt(backend, particles)
-losses = adapt(backend, ones(eltype(prob.u0), (1, n_particles)))
+losses = adapt(backend, ones(eltype(prob.u0), n_particles))
     solver_cache = (; losses, gpu_particles, gpu_data, gbest)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    prob_nn,
+    mutable_prob_nn,
     solver_cache, lb, ub, Val(true);
-    saveat = tsteps, dt = 0.1f0, maxiters = 100
+    saveat = tsteps, dt = 0.1f0, maxiters = 100,
+    prob_func = prob_func
 )
 
 @show gsol.cost
