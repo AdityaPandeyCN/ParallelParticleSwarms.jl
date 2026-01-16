@@ -49,6 +49,8 @@ function default_prob_func(prob, gpu_particle)
 return remake(prob, p = gpu_particle.position)
 end
 
+Base.broadcastable(prob::SciMLBase.AbstractODEProblem) = Ref(prob)
+
 function parameter_estim_ode!(
     prob::ODEProblem, cache,
     lb,
