@@ -85,10 +85,10 @@ end
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-# Create base problem
+# Create base problem - this is ODEProblem{false}
 prob_nn = ODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
 
-# Convert to ImmutableODEProblem (isbits compatible)
+# Convert to ImmutableODEProblem (isbits compatible) - used for probs array only
 improb = DiffEqGPU.make_prob_compatible(prob_nn)
 
 n_particles = 10_000
@@ -128,12 +128,12 @@ losses = adapt(backend, ones(eltype(prob.u0), n_particles))
 # Pre-allocate probs as CuArray of ImmutableODEProblem
 probs = adapt(backend, fill(improb, n_particles))
 
-# Cache: 5 elements (probs is CuArray)
+# Cache: 5 elements (probs is CuArray of ImmutableODEProblem)
 solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    improb,  # Pass ImmutableODEProblem
+    prob_nn,  # Pass ODEProblem{false} - vectorized_asolve needs this as 2nd arg
     solver_cache, lb, ub, Val(true);
     saveat = tsteps, dt = 0.1f0, maxiters = 10,
     prob_func = prob_func
@@ -149,7 +149,7 @@ solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    improb,  # Pass ImmutableODEProblem
+    prob_nn,  # Pass ODEProblem{false} - vectorized_asolve needs this as 2nd arg
     solver_cache, lb, ub, Val(true);
     saveat = tsteps, dt = 0.1f0, maxiters = 100,
     prob_func = prob_func
