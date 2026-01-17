@@ -85,14 +85,17 @@ end
 
 p_static = SArray{Tuple{size(p_nn)...}}(p_nn...)
 
-prob_nn = ImmutableODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
-mutable_prob_nn = ODEProblem(nn_fn, u0, tspan, (sc, p_static))
+# Create base problem
+prob_nn = ODEProblem{false}(nn_fn, u0, tspan, (sc, p_static))
+
+# Convert to ImmutableODEProblem (isbits compatible)
+improb = DiffEqGPU.make_prob_compatible(prob_nn)
 
 n_particles = 10_000
 backend = CUDABackend()
 
 function loss_pso(u, p)
-    return zero(eltype(u))
+    return eltype(u)(Inf)  # Start with Inf so any real loss improves
 end
 
 lb = @SArray fill(Float32(-10.0), length(p_static))
@@ -114,6 +117,7 @@ gpu_data = adapt(
 
 CUDA.allowscalar(false)
 
+# prob_func that works with ImmutableODEProblem on GPU
 function prob_func(prob, gpu_particle)
     return remake(prob, p = (prob.p[1], gpu_particle.position))
 end
@@ -121,12 +125,15 @@ end
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), n_particles))
 
-# Cache: 4 elements
-solver_cache = (; losses, gpu_particles, gpu_data, gbest)
+# Pre-allocate probs as CuArray of ImmutableODEProblem
+probs = adapt(backend, fill(improb, n_particles))
+
+# Cache: 5 elements (probs is CuArray)
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO Warmup (compilation)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    mutable_prob_nn,
+    improb,  # Pass ImmutableODEProblem
     solver_cache, lb, ub, Val(true);
     saveat = tsteps, dt = 0.1f0, maxiters = 10,
     prob_func = prob_func
@@ -137,11 +144,12 @@ Random.seed!(rng, 0)
 gbest, particles = ParallelParticleSwarms.init_particles(soptprob, opt, typeof(p_static))
 gpu_particles = adapt(backend, particles)
 losses = adapt(backend, ones(eltype(prob.u0), n_particles))
-solver_cache = (; losses, gpu_particles, gpu_data, gbest)
+probs = adapt(backend, fill(improb, n_particles))
+solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 
 @info "GPU-PSO (n_particles=$n_particles, maxiters=100)"
 @time gsol = ParallelParticleSwarms.parameter_estim_ode!(
-    mutable_prob_nn,
+    improb,  # Pass ImmutableODEProblem
     solver_cache, lb, ub, Val(true);
     saveat = tsteps, dt = 0.1f0, maxiters = 100,
     prob_func = prob_func
