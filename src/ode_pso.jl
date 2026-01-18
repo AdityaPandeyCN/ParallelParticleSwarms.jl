@@ -89,7 +89,9 @@ function parameter_estim_ode!(
         KernelAbstractions.synchronize(backend)
 
         debug && println("GPU-PSO iter ", i, ": loss reduction")
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+        loss_mat = map(x -> sum(x .^ 2), gpu_data .- us)
+        loss_view = ndims(losses) == 1 ? reshape(losses, 1, :) : losses
+        sum!(loss_view, loss_mat)
 
         debug && println("GPU-PSO iter ", i, ": update_costs")
         update_costs!(losses, gpu_particles; ndrange = length(losses))
@@ -155,7 +157,9 @@ function parameter_estim_ode!(
         KernelAbstractions.synchronize(backend)
 
         debug && println("GPU-PSO iter ", i, ": loss reduction")
-        sum!(losses, (map(x -> sum(x .^ 2), gpu_data .- us)))
+        loss_mat = map(x -> sum(x .^ 2), gpu_data .- us)
+        loss_view = ndims(losses) == 1 ? reshape(losses, 1, :) : losses
+        sum!(loss_view, loss_mat)
 
         debug && println("GPU-PSO iter ", i, ": update_costs")
         update_costs!(losses, gpu_particles; ndrange = length(losses))

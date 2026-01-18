@@ -6,6 +6,7 @@ using SimpleChains,
 using OptimizationOptimisers
 using Optimisers: Adam
 using OptimizationOptimJL
+using OptimizationSciPy
 using SciMLBase: ImmutableODEProblem
 
 using ParallelParticleSwarms
@@ -19,7 +20,7 @@ using Setfield
 device!(0)
 
 println("=" ^ 60)
-println("NEURAL ODE BENCHMARK - ImmutableODEProblem Approach")
+println("NEURAL ODE BENCHMARK - Global Optimization Comparison")
 println("=" ^ 60)
 
 u0 = @SArray Float32[2.0, 0.0]
@@ -75,6 +76,27 @@ optprob = Optimization.OptimizationProblem(optf, p_nn)
 moptprob = OptimizationProblem(optf, MArray{Tuple{size(p_nn)...}}(p_nn...))
 @time res_lbfgs = Optimization.solve(moptprob, LBFGS(), maxiters = 100)
 @show res_lbfgs.objective
+
+## SciPy Global Optimizers
+
+function loss_scipy(u, _)
+    u32 = Float32.(u)
+    pred = Array(solve(sprob_nn, Tsit5(); p = u32, saveat = tsteps))
+    return sum(abs2, data .- pred)
+end
+
+lb_scipy = fill(-10.0, length(p_nn))
+ub_scipy = fill(10.0, length(p_nn))
+x0_scipy = Float64.(p_nn)
+scipy_prob = OptimizationProblem(loss_scipy, x0_scipy; lb = lb_scipy, ub = ub_scipy)
+
+@info "SciPy Differential Evolution (maxiters=200)"
+@time sol_de = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDifferentialEvolution(), maxiters = 200)
+@show sol_de.objective
+
+@info "SciPy Dual Annealing (maxiters=200)"
+@time sol_da = Optimization.solve(scipy_prob, OptimizationSciPy.ScipyDualAnnealing(), maxiters = 200)
+@show sol_da.objective
 
 ## GPU-PSO with ImmutableODEProblem
 
@@ -160,8 +182,10 @@ solver_cache = (; losses, gpu_particles, gpu_data, gbest, probs)
 println("\n" * "=" ^ 60)
 println("RESULTS SUMMARY")
 println("=" ^ 60)
-println("Adam:    $(res_adam.objective)")
-println("L-BFGS:  $(res_lbfgs.objective)")
-println("GPU-PSO: $(gsol.cost)")
+println("Adam (100 iters):              $(res_adam.objective)")
+println("L-BFGS (100 iters):            $(res_lbfgs.objective)")
+println("SciPy DE (200 iters):          $(sol_de.objective)")
+println("SciPy Dual Annealing (200):    $(sol_da.objective)")
+println("GPU-PSO (10k particles, 100):  $(gsol.cost)")
 println("=" ^ 60)
 
