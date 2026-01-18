@@ -55,13 +55,11 @@ function parameter_estim_ode!(
         maxiters = 100, kwargs...
     )
     (losses, gpu_particles, gpu_data, gbest, probs) = cache
-    debug = get(ENV, "PPSO_DEBUG", "") == "1"
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
 
     for i in 1:maxiters
-        debug && println("GPU-PSO iter ", i, ": update_states")
         update_states!(
             gpu_particles,
             lb,
@@ -74,12 +72,10 @@ function parameter_estim_ode!(
         KernelAbstractions.synchronize(backend)
 
         # Both probs and gpu_particles are CuArrays of isbits types → GPU broadcast works
-        debug && println("GPU-PSO iter ", i, ": prob_func broadcast")
         probs = prob_func.(probs, gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": vectorized_asolve")
         ts, us = vectorized_asolve(
             probs,
             prob,
@@ -88,22 +84,18 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": loss reduction")
         loss_mat = map(x -> sum(x .^ 2), gpu_data .- us)
         loss_view = ndims(losses) == 1 ? reshape(losses, 1, :) : losses
         sum!(loss_view, loss_mat)
 
-        debug && println("GPU-PSO iter ", i, ": update_costs")
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": reduce best_particle")
         best_particle = minimum(gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": update gbest")
         gbest = ParallelParticleSwarms.SPSOGBest(
             best_particle.best_position, best_particle.best_cost
         )
@@ -123,13 +115,11 @@ function parameter_estim_ode!(
         maxiters = 100, kwargs...
     )
     (losses, gpu_particles, gpu_data, gbest, probs) = cache
-    debug = get(ENV, "PPSO_DEBUG", "") == "1"
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
 
     for i in 1:maxiters
-        debug && println("GPU-PSO iter ", i, ": update_states")
         update_states!(
             gpu_particles,
             lb,
@@ -142,12 +132,10 @@ function parameter_estim_ode!(
         KernelAbstractions.synchronize(backend)
 
         # Both probs and gpu_particles are CuArrays of isbits types → GPU broadcast works
-        debug && println("GPU-PSO iter ", i, ": prob_func broadcast")
         probs = prob_func.(probs, gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": vectorized_solve")
         ts, us = vectorized_solve(
             probs,
             prob,
@@ -156,22 +144,18 @@ function parameter_estim_ode!(
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": loss reduction")
         loss_mat = map(x -> sum(x .^ 2), gpu_data .- us)
         loss_view = ndims(losses) == 1 ? reshape(losses, 1, :) : losses
         sum!(loss_view, loss_mat)
 
-        debug && println("GPU-PSO iter ", i, ": update_costs")
         update_costs!(losses, gpu_particles; ndrange = length(losses))
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": reduce best_particle")
         best_particle = minimum(gpu_particles)
 
         KernelAbstractions.synchronize(backend)
 
-        debug && println("GPU-PSO iter ", i, ": update gbest")
         gbest = ParallelParticleSwarms.SPSOGBest(
             best_particle.best_position, best_particle.best_cost
         )
