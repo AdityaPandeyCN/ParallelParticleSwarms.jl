@@ -35,18 +35,17 @@ end
     return particle
 end
 
-@kernel unsafe_indices = true function update_particle_states!(
+@kernel function update_particle_states!(
         prob,
         gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, gbest_ref, w,
         opt::ParallelPSOKernel, lock::AbstractArray{UInt32}; c1 = 1.4962f0,
         c2 = 1.4962f0
     ) where {T1, T2}
+    i = @index(Global, Linear)
     tidx = @index(Local, Linear)
-    gidx = @index(Group, Linear)
 
     @uniform gs = @groupsize()[1]
-    n = length(gpu_particles)
-    i = (gidx - 1) * gs + tidx
+    @uniform n = length(gpu_particles)
 
     best_queue = @localmem SPSOGBest{T1, T2} (gs)
     queue_num = @localmem UInt32 1
@@ -56,7 +55,7 @@ end
     if i <= n
         @inbounds particle[1] = gpu_particles[i]
     end
-
+    # Initialize cost to be Inf
     if tidx == 1
         fill!(
             best_queue,
@@ -96,12 +95,14 @@ end
 
     if tidx == 1
         if queue_num[1] > 1
+            # Find best fit in block
             for j in 2:queue_num[1]
                 @inbounds if best_queue[j].cost < best_queue[1].cost
                     best_queue[1] = best_queue[j]
                 end
             end
 
+            # Take lock
             while true
                 res = @atomicreplace lock[1] UInt32(0) => UInt32(1)
                 if res.success
@@ -109,19 +110,15 @@ end
                 end
             end
 
+            # Update global best fit
             @inbounds if best_queue[1].cost < gbest_ref[1].cost
                 gbest_ref[1] = best_queue[1]
             end
 
-            while true
-                res = @atomicreplace lock[1] UInt32(1) => UInt32(0)
-                if res.success
-                    break
-                end
-            end
+            # Release lock
+            @atomicswap lock[1] = 0
         end
     end
-
     if i <= n
         @inbounds gpu_particles[i] = particle[1]
     end
@@ -129,35 +126,16 @@ end
 
 @kernel function update_particle_states!(
         prob,
-        gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, gbest_ref, w,
-        opt::ParallelPSOKernel{Backend, T, G, H}, lock::AbstractArray{UInt32}; c1 = 1.4962f0,
-        c2 = 1.4962f0
-    ) where {Backend <: CPU, T1, T2, T, G, H}
-    i = @index(Global, Linear)
-
-    @inbounds particle = gpu_particles[i]
-
-    particle = update_particle_state(particle, prob, gbest_ref[1], w, c1, c2, i, opt)
-
-    if particle.best_cost < gbest_ref[1].cost
-        gbest_ref[1] = SPSOGBest(particle.best_position, particle.best_cost)
-    end
-
-    @inbounds gpu_particles[i] = particle
-end
-
-@kernel unsafe_indices = true function update_particle_states!(
-        prob,
         gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, block_particles, gbest, w,
         opt::ParallelSyncPSOKernel; c1 = 1.4962f0,
         c2 = 1.4962f0
     ) where {T1, T2}
+    i = @index(Global, Linear)
     tidx = @index(Local, Linear)
     gidx = @index(Group, Linear)
 
     @uniform gs = @groupsize()[1]
-    n = length(gpu_particles)
-    i = (gidx - 1) * gs + tidx
+    @uniform n = length(gpu_particles)
 
     group_particles = @localmem SPSOGBest{T1, T2} (gs)
 
@@ -169,11 +147,13 @@ end
 
     if i <= n
         @inbounds particle = gpu_particles[i]
+
         particle = update_particle_state(particle, prob, gbest, w, c1, c2, i, opt)
+
         @inbounds group_particles[tidx] = SPSOGBest(particle.best_position, particle.best_cost)
     end
 
-    stride = div(gs, 2)
+    stride = gs ÷ 2
 
     while stride >= 1
         @synchronize
@@ -182,7 +162,7 @@ end
                 group_particles[tidx] = group_particles[tidx + stride]
             end
         end
-        stride = div(stride, 2)
+        stride = stride ÷ 2
     end
 
     @synchronize
@@ -196,6 +176,9 @@ end
     end
 end
 
+# Why you say we need a different code for CPUs for sync version? Turns out
+# that you cannot do reduction within a kernel due to some bugs in KA.jl
+# https://github.com/JuliaGPU/KernelAbstractions.jl/issues/330
 @kernel function update_particle_states!(
         prob, gpu_particles, gbest, w,
         opt::ParallelSyncPSOKernel{Backend, T, G, H}; c1 = 1.4962f0,
@@ -210,7 +193,7 @@ end
     @inbounds gpu_particles[i] = particle
 end
 
-@kernel unsafe_indices = true function update_particle_states_async!(
+@kernel function update_particle_states_async!(
         prob,
         gpu_particles,
         gbest_ref,
@@ -218,16 +201,15 @@ end
         c1 = 1.4962f0,
         c2 = 1.4962f0
     )
-    tidx = @index(Local, Linear)
-    gidx = @index(Group, Linear)
-    @uniform gs = @groupsize()[1]
-    i = (gidx - 1) * gs + tidx
+    i = @index(Global, Linear)
 
     if i <= length(gpu_particles)
         gbest = gbest_ref[1]
 
+        ## Access the particle
         @inbounds particle = gpu_particles[i]
 
+        ## Run all generations
         for iter in 1:maxiters
             particle = update_particle_state(particle, prob, gbest, w, c1, c2, iter, opt)
             if particle.best_cost < gbest.cost
@@ -240,31 +222,4 @@ end
         @inbounds gpu_particles[i] = particle
         @inbounds gbest_ref[1] = gbest
     end
-end
-
-@kernel function update_particle_states_async!(
-        prob,
-        gpu_particles,
-        gbest_ref,
-        w, wdamp, maxiters, opt::ParallelPSOKernel{Backend, T, G, H};
-        c1 = 1.4962f0,
-        c2 = 1.4962f0
-    ) where {Backend <: CPU, T, G, H}
-    i = @index(Global, Linear)
-
-    gbest = gbest_ref[1]
-
-    @inbounds particle = gpu_particles[i]
-
-    for iter in 1:maxiters
-        particle = update_particle_state(particle, prob, gbest, w, c1, c2, iter, opt)
-        if particle.best_cost < gbest.cost
-            @set! gbest.position = particle.best_position
-            @set! gbest.cost = particle.best_cost
-        end
-        w = w * wdamp
-    end
-
-    @inbounds gpu_particles[i] = particle
-    @inbounds gbest_ref[1] = gbest
 end
