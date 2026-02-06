@@ -116,7 +116,7 @@ end
             end
 
             # Release lock
-            @atomicswap lock[1] = 0
+            @atomicswap lock[1] = UInt32(0)
         end
     end
     if i <= n
