@@ -1,6 +1,3 @@
-Kernels · JL
-Copy
-
 @inline function update_particle_state(particle, prob, gbest, w, c1, c2, iter, opt)
     updated_velocity = w .* particle.velocity .+
         c1 .* rand(typeof(particle.velocity)) .*
@@ -130,6 +127,25 @@ end
     end
 end
 
+@kernel function update_particle_states!(
+        prob,
+        gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, gbest_ref, w,
+        opt::ParallelPSOKernel{Backend, T, G, H}, lock::AbstractArray{UInt32}; c1 = 1.4962f0,
+        c2 = 1.4962f0
+    ) where {Backend <: CPU, T1, T2, T, G, H}
+    i = @index(Global, Linear)
+
+    @inbounds particle = gpu_particles[i]
+
+    particle = update_particle_state(particle, prob, gbest_ref[1], w, c1, c2, i, opt)
+
+    if particle.best_cost < gbest_ref[1].cost
+        gbest_ref[1] = SPSOGBest(particle.best_position, particle.best_cost)
+    end
+
+    @inbounds gpu_particles[i] = particle
+end
+
 @kernel unsafe_indices = true function update_particle_states!(
         prob,
         gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, block_particles, gbest, w,
@@ -157,7 +173,7 @@ end
         @inbounds group_particles[tidx] = SPSOGBest(particle.best_position, particle.best_cost)
     end
 
-    stride = gs ÷ 2
+    stride = div(gs, 2)
 
     while stride >= 1
         @synchronize
@@ -166,7 +182,7 @@ end
                 group_particles[tidx] = group_particles[tidx + stride]
             end
         end
-        stride = stride ÷ 2
+        stride = div(stride, 2)
     end
 
     @synchronize
@@ -224,4 +240,31 @@ end
         @inbounds gpu_particles[i] = particle
         @inbounds gbest_ref[1] = gbest
     end
+end
+
+@kernel function update_particle_states_async!(
+        prob,
+        gpu_particles,
+        gbest_ref,
+        w, wdamp, maxiters, opt::ParallelPSOKernel{Backend, T, G, H};
+        c1 = 1.4962f0,
+        c2 = 1.4962f0
+    ) where {Backend <: CPU, T, G, H}
+    i = @index(Global, Linear)
+
+    gbest = gbest_ref[1]
+
+    @inbounds particle = gpu_particles[i]
+
+    for iter in 1:maxiters
+        particle = update_particle_state(particle, prob, gbest, w, c1, c2, iter, opt)
+        if particle.best_cost < gbest.cost
+            @set! gbest.position = particle.best_position
+            @set! gbest.cost = particle.best_cost
+        end
+        w = w * wdamp
+    end
+
+    @inbounds gpu_particles[i] = particle
+    @inbounds gbest_ref[1] = gbest
 end
