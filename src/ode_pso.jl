@@ -1,8 +1,12 @@
-@kernel function ode_update_particle_states!(
+@kernel unsafe_indices = true function ode_update_particle_states!(
         gpu_particles, lb, ub, gbest, w; c1 = 1.4962f0,
         c2 = 1.4962f0
     )
-    i = @index(Global, Linear)
+    tidx = @index(Local, Linear)
+    gidx = @index(Group, Linear)
+    @uniform gs = @groupsize()[1]
+    i = (gidx - 1) * gs + tidx
+
     if i <= length(gpu_particles)
         @inbounds particle = gpu_particles[i]
 
@@ -23,8 +27,12 @@
     end
 end
 
-@kernel function ode_update_particle_costs!(losses, gpu_particles)
-    i = @index(Global, Linear)
+@kernel unsafe_indices = true function ode_update_particle_costs!(losses, gpu_particles)
+    tidx = @index(Local, Linear)
+    gidx = @index(Group, Linear)
+    @uniform gs = @groupsize()[1]
+    i = (gidx - 1) * gs + tidx
+
     if i <= length(losses)
         @inbounds particle = gpu_particles[i]
         @inbounds loss = losses[i]
@@ -81,7 +89,6 @@ function parameter_estim_ode!(
         probs = prob_func.(probs, gpu_particles)
 
         KernelAbstractions.synchronize(backend)
-        ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
         ts, us = vectorized_asolve(
             probs,
@@ -139,7 +146,6 @@ function parameter_estim_ode!(
         probs = prob_func.(probs, gpu_particles)
 
         KernelAbstractions.synchronize(backend)
-        ###TODO: Somehow vectorized_asolve hangs and does not here :(
 
         ts, us = vectorized_solve(
             probs,
