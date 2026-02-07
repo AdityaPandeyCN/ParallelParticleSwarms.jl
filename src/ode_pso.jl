@@ -1,12 +1,8 @@
-@kernel unsafe_indices = true function ode_update_particle_states!(
+@kernel function ode_update_particle_states!(
         gpu_particles, lb, ub, gbest, w; c1 = 1.4962f0,
         c2 = 1.4962f0
     )
-    tidx = @index(Local, Linear)
-    gidx = @index(Group, Linear)
-    @uniform gs = @groupsize()[1]
-    i = (gidx - 1) * gs + tidx
-
+    i = @index(Global, Linear)
     if i <= length(gpu_particles)
         @inbounds particle = gpu_particles[i]
 
@@ -27,12 +23,8 @@
     end
 end
 
-@kernel unsafe_indices = true function ode_update_particle_costs!(losses, gpu_particles)
-    tidx = @index(Local, Linear)
-    gidx = @index(Group, Linear)
-    @uniform gs = @groupsize()[1]
-    i = (gidx - 1) * gs + tidx
-
+@kernel function ode_update_particle_costs!(losses, gpu_particles)
+    i = @index(Global, Linear)
     if i <= length(losses)
         @inbounds particle = gpu_particles[i]
         @inbounds loss = losses[i]
@@ -73,6 +65,8 @@ function parameter_estim_ode!(
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
+    padded_particles = cld(length(gpu_particles), 256) * 256
+    padded_losses = cld(length(losses), 256) * 256
 
     for i in 1:maxiters
         update_states!(
@@ -81,7 +75,7 @@ function parameter_estim_ode!(
             ub,
             gbest,
             w;
-            ndrange = length(gpu_particles)
+            ndrange = padded_particles
         )
 
         KernelAbstractions.synchronize(backend)
@@ -100,7 +94,7 @@ function parameter_estim_ode!(
 
         _reduce_losses!(losses, gpu_data, us)
 
-        update_costs!(losses, gpu_particles; ndrange = length(losses))
+        update_costs!(losses, gpu_particles; ndrange = padded_losses)
 
         KernelAbstractions.synchronize(backend)
 
@@ -130,6 +124,8 @@ function parameter_estim_ode!(
     backend = get_backend(gpu_particles)
     update_states! = ParallelParticleSwarms.ode_update_particle_states!(backend)
     update_costs! = ParallelParticleSwarms.ode_update_particle_costs!(backend)
+    padded_particles = cld(length(gpu_particles), 256) * 256
+    padded_losses = cld(length(losses), 256) * 256
 
     for i in 1:maxiters
         update_states!(
@@ -138,7 +134,7 @@ function parameter_estim_ode!(
             ub,
             gbest,
             w;
-            ndrange = length(gpu_particles)
+            ndrange = padded_particles
         )
 
         KernelAbstractions.synchronize(backend)
@@ -157,7 +153,7 @@ function parameter_estim_ode!(
 
         _reduce_losses!(losses, gpu_data, us)
 
-        update_costs!(losses, gpu_particles; ndrange = length(losses))
+        update_costs!(losses, gpu_particles; ndrange = padded_losses)
 
         KernelAbstractions.synchronize(backend)
 

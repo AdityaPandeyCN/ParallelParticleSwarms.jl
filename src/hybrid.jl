@@ -1,10 +1,8 @@
 @kernel function simplebfgs_run!(nlprob, x0s, result, opt, maxiters, abstol, reltol)
     i = @index(Global, Linear)
-    if i <= length(x0s)
-        nlcache = remake(nlprob; u0 = x0s[i])
-        sol = solve(nlcache, opt; maxiters, abstol, reltol)
-        @inbounds result[i] = sol.u
-    end
+    nlcache = remake(nlprob; u0 = x0s[i])
+    sol = solve(nlcache, opt; maxiters, abstol, reltol)
+    @inbounds result[i] = sol.u
 end
 
 function SciMLBase.solve!(
@@ -29,6 +27,7 @@ function SciMLBase.solve!(
 
     ∇f = instantiate_gradient(prob.f.f, prob.f.adtype)
 
+    kernel = simplebfgs_run!(backend)
     nlprob = SimpleNonlinearSolve.ImmutableNonlinearProblem{false}(∇f, prob.u0, prob.p)
 
     nlalg = opt.local_opt isa LBFGS ?
@@ -38,19 +37,18 @@ function SciMLBase.solve!(
         ) : SimpleBroyden(; linesearch = Val(true))
 
     t0 = time()
+    kernel(
+        nlprob,
+        x0s,
+        result,
+        nlalg,
+        local_maxiters,
+        abstol,
+        reltol;
+        ndrange = length(x0s)
+    )
 
-    x0s_cpu = Array(x0s)
-    result_cpu = Array(result)
-    for i in eachindex(x0s_cpu)
-        nlcache = remake(nlprob; u0 = x0s_cpu[i])
-        sol = SimpleNonlinearSolve.solve(nlcache, nlalg; maxiters = local_maxiters, abstol, reltol)
-        result_cpu[i] = sol.u
-    end
-    copyto!(result, result_cpu)
-
-    raw_f = prob.f.f
-    p = prob.p
-    sol_bfgs = (x -> raw_f(x, p)).(result)
+    sol_bfgs = (x -> prob.f(x, prob.p)).(result)
     sol_bfgs = (x -> isnan(x) ? convert(eltype(prob.u0), Inf) : x).(sol_bfgs)
 
     minobj, ind = findmin(sol_bfgs)
@@ -58,6 +56,8 @@ function SciMLBase.solve!(
         sol_obj = minobj > sol_pso.objective ? (sol_pso.u, sol_pso.objective) :
         (view(result, ind), minobj)
     t1 = time()
+
+    # @show sol_pso.stats.time
 
     solve_time = (t1 - t0) + sol_pso.stats.time
 
