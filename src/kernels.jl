@@ -116,7 +116,12 @@ end
             end
 
             # Release lock
-            @atomicswap lock[1] = UInt32(0)
+            while true
+                res = @atomicreplace lock[1] UInt32(1) => UInt32(0)
+                if res.success
+                    break
+                end
+            end
         end
     end
     if i <= n
