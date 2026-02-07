@@ -116,12 +116,7 @@ end
             end
 
             # Release lock
-            while true
-                res = @atomicreplace lock[1] UInt32(1) => UInt32(0)
-                if res.success
-                    break
-                end
-            end
+            @atomicreplace lock[1] UInt32(1) => UInt32(0)
         end
     end
     if i <= n
