@@ -1,7 +1,7 @@
 name = "ParallelParticleSwarms"
 uuid = "ab63da0c-63b4-40fa-a3b7-d2cba5be6419"
-version = "1.0.0"
 authors = ["Utkarsh <rajpututkarsh530@gmail.com> and contributors"]
+version = "1.0.0"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -9,7 +9,9 @@ DiffEqGPU = "071ae1c0-96b5-11e9-1965-c90190d839ea"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Optimization = "7f7a1694-90dd-40f0-9382-eb1efda571ba"
+OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 QuasiMonteCarlo = "8a4e6c94-4038-4cdc-81c3-7e6ffdb2a71b"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"

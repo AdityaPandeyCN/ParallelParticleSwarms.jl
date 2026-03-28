@@ -1,3 +1,5 @@
+import Optim
+
 @kernel function simplebfgs_run!(nlprob, x0s, result, opt, maxiters, abstol, reltol)
     i = @index(Global, Linear)
     nlcache = remake(nlprob; u0 = x0s[i])
@@ -9,61 +11,75 @@ function SciMLBase.solve!(
         cache::HybridPSOCache, opt::HybridPSO{Backend, LocalOpt}, args...;
         abstol = nothing,
         reltol = nothing,
-        maxiters = 100, local_maxiters = 10, kwargs...
+        maxiters = 100,
+        local_maxiters = 50,
+        n_starts = 20,
+        kwargs...
     ) where {
         Backend, LocalOpt <: Union{LBFGS, BFGS},
     }
+    # PSO exploration
     pso_cache = cache.pso_cache
-
     sol_pso = solve!(pso_cache)
     x0s = sol_pso.original
+    prob = cache.prob
 
-    backend = opt.backend
+    best_u   = sol_pso.u
+    best_obj = sol_pso.objective isa Real ? sol_pso.objective : sol_pso.objective[]
 
-    prob = remake(cache.prob, lb = nothing, ub = nothing)
+    # Rank starting points by objective value
+    costs = map(x -> prob.f(x, prob.p), x0s)
+    costs = map(c -> (isnan(c) || isinf(c)) ? convert(eltype(best_obj), Inf) : c, costs)
+    n = min(n_starts, length(x0s))
+    top_idx = partialsortperm(Vector(costs), 1:n)
 
-    result = cache.start_points
-    copyto!(result, x0s)
+    # Multi-start L-BFGS minimization 
+    local_method = if opt.local_opt isa LBFGS
+        Optim.LBFGS(; m = opt.local_opt.threshold)
+    else
+        Optim.BFGS()
+    end
 
-    ∇f = instantiate_gradient(prob.f.f, prob.f.adtype)
+    _abstol = something(abstol, 1e-10)
+    _reltol = something(reltol, 1e-10)
+    orig_lb = prob.lb
+    orig_ub = prob.ub
 
-    kernel = simplebfgs_run!(backend)
-    nlprob = SimpleNonlinearSolve.ImmutableNonlinearProblem{false}(∇f, prob.u0, prob.p)
-
-    nlalg = opt.local_opt isa LBFGS ?
-        SimpleLimitedMemoryBroyden(;
-            threshold = opt.local_opt.threshold,
-            linesearch = Val(true)
-        ) : SimpleBroyden(; linesearch = Val(true))
+    optf = OptimizationFunction{false}(prob.f.f, prob.f.adtype)
 
     t0 = time()
-    kernel(
-        nlprob,
-        x0s,
-        result,
-        nlalg,
-        local_maxiters,
-        abstol,
-        reltol;
-        ndrange = length(x0s)
-    )
+    for i in top_idx
+        u0 = x0s[i]
+        # Nudge points on the boundary inward
+        if orig_lb !== nothing
+            ε = convert(eltype(u0), 1e-12)
+            u0 = clamp.(u0, orig_lb .+ ε, orig_ub .- ε)
+        end
 
-    sol_bfgs = (x -> prob.f(x, prob.p)).(result)
-    sol_bfgs = (x -> isnan(x) ? convert(eltype(prob.u0), Inf) : x).(sol_bfgs)
+        local_prob = if orig_lb !== nothing
+            OptimizationProblem{false}(optf, u0, prob.p; lb = orig_lb, ub = orig_ub)
+        else
+            OptimizationProblem{false}(optf, u0, prob.p)
+        end
 
-    minobj, ind = findmin(sol_bfgs)
-    sol_u,
-        sol_obj = minobj > sol_pso.objective ? (sol_pso.u, sol_pso.objective) :
-        (view(result, ind), minobj)
+        try
+            sol = Optimization.solve(local_prob, local_method;
+                maxiters = local_maxiters, abstol = _abstol, reltol = _reltol)
+            fval = sol.objective isa Real ? sol.objective : sol.objective[]
+            if !isnan(fval) && !isinf(fval) && fval < best_obj
+                best_obj = fval
+                best_u   = sol.u
+            end
+        catch
+            continue
+        end
+    end
     t1 = time()
 
-    # @show sol_pso.stats.time
-
     solve_time = (t1 - t0) + sol_pso.stats.time
-
     return SciMLBase.build_solution(
         SciMLBase.DefaultOptimizationCache(prob.f, prob.p), opt,
-        sol_u, sol_obj,
+        best_u, best_obj,
         stats = Optimization.OptimizationStats(; time = solve_time)
     )
 end
