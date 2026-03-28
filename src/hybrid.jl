@@ -1,12 +1,5 @@
 import Optim
 
-@kernel function simplebfgs_run!(nlprob, x0s, result, opt, maxiters, abstol, reltol)
-    i = @index(Global, Linear)
-    nlcache = remake(nlprob; u0 = x0s[i])
-    sol = solve(nlcache, opt; maxiters, abstol, reltol)
-    @inbounds result[i] = sol.u
-end
-
 function SciMLBase.solve!(
         cache::HybridPSOCache, opt::HybridPSO{Backend, LocalOpt}, args...;
         abstol = nothing,
@@ -18,7 +11,7 @@ function SciMLBase.solve!(
     ) where {
         Backend, LocalOpt <: Union{LBFGS, BFGS},
     }
-    # PSO exploration
+    # Phase 1: PSO exploration
     pso_cache = cache.pso_cache
     sol_pso = solve!(pso_cache)
     x0s = sol_pso.original
@@ -27,13 +20,13 @@ function SciMLBase.solve!(
     best_u   = sol_pso.u
     best_obj = sol_pso.objective isa Real ? sol_pso.objective : sol_pso.objective[]
 
-    # Rank starting points by objective value
+    # Phase 2: rank starting points by objective value
     costs = map(x -> prob.f(x, prob.p), x0s)
     costs = map(c -> (isnan(c) || isinf(c)) ? convert(eltype(best_obj), Inf) : c, costs)
     n = min(n_starts, length(x0s))
     top_idx = partialsortperm(Vector(costs), 1:n)
 
-    # Multi-start L-BFGS minimization 
+    # Phase 3: multi-start L-BFGS minimization from top particles
     local_method = if opt.local_opt isa LBFGS
         Optim.LBFGS(; m = opt.local_opt.threshold)
     else
@@ -45,21 +38,27 @@ function SciMLBase.solve!(
     orig_lb = prob.lb
     orig_ub = prob.ub
 
-    optf = OptimizationFunction{false}(prob.f.f, prob.f.adtype)
+    # convert bounds to Vector for Optim.Fminbox compatibility
+    _lb = orig_lb !== nothing ? Vector(orig_lb) : nothing
+    _ub = orig_ub !== nothing ? Vector(orig_ub) : nothing
+
+    # wrap objective to accept plain Vector
+    _f = (u, p) -> prob.f.f(u, p)
+    optf = OptimizationFunction(_f, AutoForwardDiff())
 
     t0 = time()
     for i in top_idx
-        u0 = x0s[i]
-        # Nudge points on the boundary inward
-        if orig_lb !== nothing
-            ε = convert(eltype(u0), 1e-12)
-            u0 = clamp.(u0, orig_lb .+ ε, orig_ub .- ε)
+        u0 = Vector(x0s[i])
+        # nudge points on the boundary inward
+        if _lb !== nothing
+            ε = 1e-12
+            u0 .= clamp.(u0, _lb .+ ε, _ub .- ε)
         end
 
-        local_prob = if orig_lb !== nothing
-            OptimizationProblem{false}(optf, u0, prob.p; lb = orig_lb, ub = orig_ub)
+        local_prob = if _lb !== nothing
+            OptimizationProblem(optf, u0, prob.p; lb = _lb, ub = _ub)
         else
-            OptimizationProblem{false}(optf, u0, prob.p)
+            OptimizationProblem(optf, u0, prob.p)
         end
 
         try
