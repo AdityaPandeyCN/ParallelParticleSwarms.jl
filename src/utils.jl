@@ -383,5 +383,8 @@ end
 end
 
 @inline function instantiate_gradient(f, adtype::AutoEnzyme)
-    return (θ, p) -> autodiff_deferred(Reverse, Const(x -> f(x, p)), Active, Active(θ))[1][1]
+    return (θ, p) -> Enzyme.autodiff_deferred(
+        Enzyme.Reverse, Enzyme.Const(x -> f(x, p)),
+        Enzyme.Active, Enzyme.Active(θ)
+    )[1][1]
 end

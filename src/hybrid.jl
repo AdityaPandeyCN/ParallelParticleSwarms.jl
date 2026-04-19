@@ -2,7 +2,7 @@ using LinearAlgebra: norm, dot
 using KernelAbstractions
 using SciMLBase
 using Optimization
-using LineSearch: _sw_search
+import LineSearch
 
 # Isbits, GPU-safe eval functor for Strong Wolfe line search.
 # Clamps to bounds, NaN firewall prevents non-finite values from poisoning interpolation.
@@ -78,14 +78,14 @@ end
             end
             eval_fn = OptEval(f, grad_f, p, x, dir, lb, ub)
             ϕ_0, dϕ_0 = eval_fn(zero(T))
-            α, ok = _sw_search(
+            α, ok = LineSearch._sw_search(
                 eval_fn, ϕ_0, dϕ_0, c1, c2,
                 one(T), α_max, ls_maxiters, zoom_maxiters
             )
             if !ok
                 eval_fn = OptEval(f, grad_f, p, x, -g, lb, ub)
                 ϕ_0, dϕ_0 = eval_fn(zero(T))
-                α, ok = _sw_search(
+                α, ok = LineSearch._sw_search(
                     eval_fn, ϕ_0, dϕ_0, c1, c2,
                     one(T), α_max, ls_maxiters, zoom_maxiters
                 )

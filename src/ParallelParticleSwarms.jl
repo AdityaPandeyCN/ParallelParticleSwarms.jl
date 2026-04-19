@@ -4,6 +4,7 @@ using SciMLBase, StaticArrays, Setfield, KernelAbstractions
 using QuasiMonteCarlo, Optimization, SimpleNonlinearSolve, ForwardDiff
 import Adapt
 import Adapt: adapt
+import Enzyme
 import Enzyme: autodiff_deferred, Active, Reverse, Const
 import KernelAbstractions: @atomic, @atomicreplace, @atomicswap
 using QuasiMonteCarlo
