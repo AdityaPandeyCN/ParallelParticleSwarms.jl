@@ -4,10 +4,7 @@ using Optimization
 using LineSearch
 using NonlinearSolveQuasiNewton
 
-# Safety box around the original feasible region. Local refinement may step
-# modestly outside `[lb, ub]`, but past this margin we reject the trial point
-# instead of evaluating f there — e.g. F19 Griewank-Rosenbrock overflows to Inf
-# for |θ| ~ 1e10 in Float32 and then cos(Inf) throws DomainError.
+"Check that `θ` lies within a slack-expanded box around `[lb, ub]`."
 @inline _in_safe_box(θ, ::Nothing, ::Nothing) = all(isfinite, θ)
 @inline function _in_safe_box(θ::AbstractArray{T}, lb, ub) where {T}
     all(isfinite, θ) || return false
@@ -15,21 +12,27 @@ using NonlinearSolveQuasiNewton
     return all(θ .>= lb .- T(2) .* w) && all(θ .<= ub .+ T(2) .* w)
 end
 
-# Huge-magnitude gradient: makes the Strong Wolfe Armijo test fail so the line
-# search rejects the trial step without us ever calling f at the bad point.
+"Sentinel gradient with huge magnitude used to reject out-of-box trial points."
 @inline _huge_grad(θ::AbstractArray{T}) where {T} = map(_ -> T(1.0e15), θ)
 
-@kernel function simplebfgs_run!(nlprob, x0s, result, opt, maxiters, abstol, reltol, grad_f)
+"Per-particle local quasi-Newton refinement kernel. The algorithm is built inside the kernel because `QuasiNewtonAlgorithm` is not isbits."
+@kernel function simplebfgs_run!(
+        nlprob, x0s, result, linesearch, ::Val{Threshold}, ::Val{IsLBFGS},
+        maxiters, abstol, reltol, grad_f
+    ) where {Threshold, IsLBFGS}
     i = @index(Global, Linear)
+    nlalg = IsLBFGS ?
+        NonlinearSolveQuasiNewton.LimitedMemoryBroyden(; threshold = Val(Threshold), linesearch) :
+        NonlinearSolveQuasiNewton.Broyden(; linesearch)
     nlcache = SciMLBase.init(
-        nlprob, opt; u0 = x0s[i], maxiters, abstol, reltol, grad_f,
+        nlprob, nlalg; u0 = x0s[i], maxiters, abstol, reltol, grad_f,
         kwargshandle = SciMLBase.KeywordArgSilent
     )
     sol = SciMLBase.solve!(nlcache)
     @inbounds result[i] = sol.u
 end
 
-# HybridPSO: global PSO exploration, then per-particle local BFGS refinement.
+"Hybrid PSO solve: global PSO exploration followed by per-particle local quasi-Newton refinement."
 function SciMLBase.solve!(
         cache::HybridPSOCache, opt::HybridPSO{Backend, LocalOpt}, args...;
         abstol = nothing, reltol = nothing, maxiters = 100, local_maxiters = 10,
@@ -51,17 +54,14 @@ function SciMLBase.solve!(
     copyto!(result, x0s)
 
     nlprob = SimpleNonlinearSolve.ImmutableNonlinearProblem{false}(grad_f, prob.u0, prob.p)
-    nlalg = opt.local_opt isa LBFGS ?
-        NonlinearSolveQuasiNewton.LimitedMemoryBroyden(;
-            threshold = opt.local_opt.threshold,
-            linesearch
-        ) :
-        NonlinearSolveQuasiNewton.Broyden(; linesearch)
+    is_lbfgs_val = Val(opt.local_opt isa LBFGS)
+    threshold_val = opt.local_opt isa LBFGS ? Val(opt.local_opt.threshold) : Val(0)
 
     t0 = time()
     kernel = simplebfgs_run!(opt.backend)
     kernel(
-        nlprob, x0s, result, nlalg, local_maxiters, abstol, reltol, grad_f;
+        nlprob, x0s, result, linesearch, threshold_val, is_lbfgs_val,
+        local_maxiters, abstol, reltol, grad_f;
         ndrange = length(x0s)
     )
     KernelAbstractions.synchronize(opt.backend)
