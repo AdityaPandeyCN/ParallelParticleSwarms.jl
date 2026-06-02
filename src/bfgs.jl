@@ -1,5 +1,3 @@
-using NonlinearSolveBase: ImmutableNonlinearProblem
-
 function SciMLBase.__solve(
         prob::SciMLBase.OptimizationProblem,
         opt::LBFGS,

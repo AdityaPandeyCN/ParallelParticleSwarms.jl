@@ -3,7 +3,6 @@ using SciMLBase
 using Optimization
 using LineSearch
 using SimpleNonlinearSolve
-using NonlinearSolveBase: ImmutableNonlinearProblem
 
 @inline _unwrap_scalar(x::Real) = x
 @inline _unwrap_scalar(x) = x[]
