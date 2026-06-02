@@ -2,6 +2,7 @@ module ParallelParticleSwarms
 
 using SciMLBase, StaticArrays, Setfield, KernelAbstractions
 using QuasiMonteCarlo, Optimization, SimpleNonlinearSolve, ForwardDiff, LineSearch
+import SimpleNonlinearSolve.NonlinearSolveBase: ImmutableNonlinearProblem
 import Adapt
 import Adapt: adapt
 import Enzyme: autodiff, autodiff_deferred, Active, Reverse, Const, Duplicated, make_zero!
