@@ -376,12 +376,33 @@ Based on the paper: Particle swarm optimization method for constrained optimizat
     return penalty
 end
 
-#TODO: Possible migration to DifferentiationInterface.jl,
-# however I cannot compile GPU-compatible gradients with Enzyme as Mar 2025
+@inline function _enzyme_scalar_f(f, θ, p)
+    val = f(θ, p)
+    return val isa Number ? val : first(val)
+end
+
 @inline function instantiate_gradient(f, adtype::AutoForwardDiff)
     return (θ, p) -> ForwardDiff.gradient(x -> f(x, p), θ)
 end
 
 @inline function instantiate_gradient(f, adtype::AutoEnzyme)
-    return (θ, p) -> autodiff_deferred(Reverse, Const(x -> f(x, p)), Active, Active(θ))[1][1]
+    return (θ, p) -> begin
+        θd = θ isa SVector ? MVector(θ) : θ
+        res = similar(θd)
+        make_zero!(res)
+        autodiff(
+            Reverse,
+            Const(_enzyme_scalar_f),
+            Active,
+            Const(f),
+            Duplicated(θd, res),
+            Const(p),
+        )
+        return as_svector(res)
+    end
 end
+
+# SimpleNonlinearSolve static L-BFGS requires `SVector` gradients (not `MVector`/`Vector`).
+@inline as_svector(x::SVector) = x
+@inline as_svector(x) = SVector(x)
+@inline as_svector_grad(f) = (θ, p) -> as_svector(f(θ, p))
