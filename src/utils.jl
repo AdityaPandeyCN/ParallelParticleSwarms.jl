@@ -381,28 +381,39 @@ end
     return val isa Number ? val : first(val)
 end
 
-@inline function instantiate_gradient(f, adtype::AutoForwardDiff)
-    return (θ, p) -> ForwardDiff.gradient(x -> f(x, p), θ)
+struct ForwardDiffGradient{F}
+    f::F
+end
+@inline function (g::ForwardDiffGradient)(θ, p)
+    return ForwardDiff.gradient(x -> g.f(x, p), θ)
 end
 
-@inline function instantiate_gradient(f, adtype::AutoEnzyme)
-    return (θ, p) -> begin
-        θd = θ isa SVector ? MVector(θ) : θ
-        res = similar(θd)
-        make_zero!(res)
-        autodiff(
-            Reverse,
-            Const(_enzyme_scalar_f),
-            Active,
-            Const(f),
-            Duplicated(θd, res),
-            Const(p),
-        )
-        return as_svector(res)
-    end
+struct EnzymeGradient{F}
+    f::F
+end
+@inline function (g::EnzymeGradient)(θ, p)
+    θd = θ isa SVector ? MVector(θ) : θ
+    res = similar(θd)
+    make_zero!(res)
+    autodiff(
+        Reverse,
+        Const(_enzyme_scalar_f),
+        Active,
+        Const(g.f),
+        Duplicated(θd, res),
+        Const(p),
+    )
+    return res
 end
 
-# SimpleNonlinearSolve static L-BFGS requires `SVector` gradients (not `MVector`/`Vector`).
+@inline instantiate_gradient(f, ::AutoForwardDiff) = ForwardDiffGradient(f)
+@inline instantiate_gradient(f, ::AutoEnzyme) = EnzymeGradient(f)
+
 @inline as_svector(x::SVector) = x
 @inline as_svector(x) = SVector(x)
-@inline as_svector_grad(f) = (θ, p) -> as_svector(f(θ, p))
+
+struct SVectorGradient{G}
+    g::G
+end
+@inline (sg::SVectorGradient)(θ, p) = as_svector(sg.g(θ, p))
+@inline as_svector_grad(g) = SVectorGradient(g)

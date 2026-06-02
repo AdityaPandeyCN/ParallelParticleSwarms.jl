@@ -14,15 +14,10 @@ function _hybrid_bounds(prob, ::Val{d}, T) where {d}
     return lb, ub
 end
 
-"""Gradient wrapper: in-box values use AD; out-of-box trials get a huge sentinel gradient."""
 struct BoundedGrad{G, LB, UB}
     raw::G
     lb::LB
     ub::UB
-end
-
-@inline function (bg::BoundedGrad{G, Nothing, Nothing})(θ, p) where {G}
-    return as_svector(bg.raw(θ, p))
 end
 
 @inline function (bg::BoundedGrad)(θ, p)
@@ -34,27 +29,32 @@ end
     return as_svector(g)
 end
 
-@inline function _local_nlalg(local_opt::LBFGS, linesearch)
-    return SimpleLimitedMemoryBroyden(; threshold = local_opt.threshold, linesearch)
+@inline function _nlalg(local_opt::LBFGS, linesearch)
+    SimpleLimitedMemoryBroyden(; threshold = local_opt.threshold, linesearch)
 end
-@inline _local_nlalg(::BFGS, linesearch) = SimpleBroyden(; linesearch)
+@inline _nlalg(::BFGS, linesearch) = SimpleBroyden(; linesearch)
 
-# Per-particle local solve via SimpleNonlinearSolve (same API as standalone `LBFGS`/`BFGS`).
+@inline function _nlprob(grad_f, u0, p)
+    convert(
+        ImmutableNonlinearProblem,
+        SciMLBase.NonlinearProblem{false}(grad_f, as_svector(u0), p),
+    )
+end
+
+@inline function _local_solve(grad_f, u0, p, nlalg, maxiters, abstol, reltol, grad_f_kw)
+    nlprob = _nlprob(grad_f, u0, p)
+    if grad_f_kw
+        return solve(nlprob, nlalg; maxiters, abstol, reltol, grad_f)
+    end
+    return solve(nlprob, nlalg; maxiters, abstol, reltol)
+end
+
 @kernel function simplebfgs_run!(
-        grad_f, f_raw, p, x0s, result, result_fx, nlalg, maxiters, abstol, reltol
+        grad_f, f_raw, p, x0s, result, result_fx, nlalg,
+        maxiters, abstol, reltol, grad_f_kw::Bool,
     )
     i = @index(Global, Linear)
-    x0 = as_svector(x0s[i])
-    nlprob_i = ImmutableNonlinearProblem{false}(grad_f, x0, p)
-    sol = SciMLBase.solve(
-        nlprob_i,
-        nlalg;
-        maxiters,
-        abstol,
-        reltol,
-        grad_f,
-        kwargshandle = SciMLBase.KeywordArgSilent,
-    )
+    sol = _local_solve(grad_f, x0s[i], p, nlalg, maxiters, abstol, reltol, grad_f_kw)
     u = as_svector(sol.u)
     T = eltype(u)
     v = f_raw(u, p)
@@ -80,29 +80,29 @@ function SciMLBase.solve!(
     prob = cache.prob
     f_raw, p = prob.f.f, prob.p
     T = eltype(prob.u0)
-    d = length(prob.u0)
-    lb, ub = _hybrid_bounds(prob, Val(d), T)
+    lb, ub = _hybrid_bounds(prob, Val(length(prob.u0)), T)
+    backend = opt.backend
 
-    raw_grad = instantiate_gradient(f_raw, prob.f.adtype)
-    grad_f = BoundedGrad(raw_grad, lb, ub)
-    nlalg = _local_nlalg(opt.local_opt, linesearch)
+    grad_f = as_svector_grad(BoundedGrad(instantiate_gradient(f_raw, prob.f.adtype), lb, ub))
+    nlalg = _nlalg(opt.local_opt, linesearch)
+    grad_f_kw = linesearch isa StrongWolfeLineSearch
 
     x0s = sol_pso.original
     n = length(x0s)
     result = cache.start_points
     copyto!(result, x0s)
-    result_fx = KernelAbstractions.allocate(opt.backend, T, n)
+    result_fx = KernelAbstractions.allocate(backend, T, n)
 
     t0 = time()
-    kernel = simplebfgs_run!(opt.backend)
-    kernel(
+    simplebfgs_run!(backend)(
         grad_f, f_raw, p, x0s, result, result_fx, nlalg,
-        local_maxiters, abstol, reltol;
+        local_maxiters, abstol, reltol, grad_f_kw;
         ndrange = n,
     )
-    KernelAbstractions.synchronize(opt.backend)
+    KernelAbstractions.synchronize(backend)
 
-    minobj, ind = findmin(Array(result_fx))
+    fx_host = Array(result_fx)
+    minobj, ind = findmin(fx_host)
     if minobj < best_obj
         best_obj = minobj
         best_u = Array(result)[ind]
