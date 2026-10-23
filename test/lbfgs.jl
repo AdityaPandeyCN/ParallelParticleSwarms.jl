@@ -48,7 +48,17 @@ using ParallelParticleSwarms, Optimization, SciMLBase, StaticArrays, KernelAbstr
     @test sol.objective < 1.0e-8
     @test all(-2 .≤ sol.u) && all(sol.u .≤ 2)
 
-    adtypes = (Optimization.AutoEnzyme(), SciMLBase.NoAD())
+    @testset "chunked ForwardDiff gradient, chunksize = $K" for K in (1, 3, 16)
+        f(x, p) = sum(i -> p[i] * x[i]^2 * x[mod1(i + 1, 10)], 1:10) + prod(x) / 10
+        x = SVector{10}(range(0.5, 1.4; length = 10))
+        p = SVector{10}(1.0:10.0)
+        g = ParallelParticleSwarms.instantiate_gradient(f, Optimization.AutoForwardDiff(; chunksize = K))
+        @test g isa ParallelParticleSwarms.ChunkedForwardDiffGradient{K}
+        @test g(x, p) isa SVector{10, Float64}
+        @test g(x, p) ≈ ParallelParticleSwarms.ForwardDiff.gradient(y -> f(y, p), x)
+    end
+
+    adtypes = (Optimization.AutoEnzyme(), SciMLBase.NoAD(), Optimization.AutoForwardDiff(; chunksize = 1))
     @testset "adtype = $(nameof(typeof(adtype)))" for adtype in adtypes
         sol = _solve_hybrid(rosen2, [-1.2, 1.0], [1.0, 100.0]; adtype)
         @test sol.u ≈ [1.0, 1.0] atol = 1.0e-4

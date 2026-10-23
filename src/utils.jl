@@ -408,7 +408,43 @@ end
     )[1][2]
 end
 
-@inline instantiate_gradient(f, ::AutoForwardDiff) = ForwardDiffGradient(f)
+# `AutoForwardDiff(; chunksize = K)` differentiates SVectors in passes of K partials, so
+# every dual number holds K + 1 values instead of length(θ) + 1. On the GPU this keeps a
+# thread's stack small for long parameter vectors: a single full-width pass over 86
+# parameters through an RK4 solve overflows CUDA's 512 KB per-thread limit inside
+# `lbfgs_run!`.
+struct ChunkedForwardDiffGradient{K, F}
+    f::F
+end
+ChunkedForwardDiffGradient{K}(f) where {K} = ChunkedForwardDiffGradient{K, typeof(f)}(f)
+
+# The chunk offset `c` is an argument here because a closure over the reassigned loop
+# variable would box it, which GPU kernels cannot compile.
+@inline _seed_chunk(θ::SVector{N, T}, ::Type{Tg}, c, ::Val{K}) where {N, T, Tg, K} =
+    SVector{N}(
+    ntuple(
+        i -> ForwardDiff.Dual{Tg}(θ[i], ForwardDiff.Partials(ntuple(j -> T(i - c == j), Val(K)))),
+        Val(N)
+    )
+)
+@inline _scatter_chunk(grad::SVector{N}, dy, c, ::Val{K}) where {N, K} =
+    SVector{N}(ntuple(i -> 1 <= i - c <= K ? dy[i - c] : grad[i], Val(N)))
+
+# `@noinline` lets every call site in the L-BFGS loop and line search share one stack
+# frame instead of each inlining its own copy.
+@noinline function (g::ChunkedForwardDiffGradient{K})(θ::SVector{N, T}, p) where {K, N, T}
+    fp = Base.Fix2(g.f, p)
+    Tg = ForwardDiff.Tag{typeof(fp), T}
+    grad = zero(θ)
+    for c in 0:K:(N - 1)
+        grad = _scatter_chunk(grad, ForwardDiff.partials(fp(_seed_chunk(θ, Tg, c, Val(K)))), c, Val(K))
+    end
+    return grad
+end
+(g::ChunkedForwardDiffGradient)(θ, p) = ForwardDiff.gradient(Base.Fix2(g.f, p), θ)
+
+@inline instantiate_gradient(f, ::AutoForwardDiff{nothing}) = ForwardDiffGradient(f)
+@inline instantiate_gradient(f, ::AutoForwardDiff{K}) where {K} = ChunkedForwardDiffGradient{K}(f)
 @inline instantiate_gradient(f, ::AutoEnzyme) = EnzymeGradient(f)
 # Problems without an AD type (e.g. `NoAD()`) fall back to ForwardDiff.
 @inline instantiate_gradient(f, _) = ForwardDiffGradient(f)
