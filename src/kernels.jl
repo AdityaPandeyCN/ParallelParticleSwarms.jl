@@ -46,6 +46,65 @@ end
     return particle
 end
 
+# Differential-evolution step on the personal bests (`ParallelSyncPSOKernel(...; de_F)`).
+# Uniform index in 1:n from a Float32 draw (integer `rand` ranges are not GPU-friendly).
+@inline _rand_index(n) = min(n, unsafe_trunc(Int, rand(Float32) * n) + 1)
+
+# rand/1/bin trial: mutant pa + F (pb - pc), binomial crossover with x at rate CR, and
+# coordinate `jr` always taken from the mutant.
+@inline function de_trial(x::S, pa::S, pb::S, pc::S, F, CR, jr) where {S <: StaticArrays.StaticArray}
+    T = eltype(S)
+    return S(
+        ntuple(
+            d -> (d == jr || rand(T) < CR) ? pa[d] + T(F) * (pb[d] - pc[d]) : x[d],
+            Val(length(S))
+        )
+    )
+end
+
+@kernel function snapshot_best_positions!(snapshot, gpu_particles)
+    i = @index(Global, Linear)
+    if i <= length(gpu_particles)
+        @inbounds snapshot[i] = gpu_particles[i].best_position
+    end
+end
+
+# Each particle proposes a DE trial built from the snapshot of the personal bests (so threads
+# never read a personal best another thread is writing) and keeps it if it is no worse.
+@kernel function de_step!(prob, gpu_particles, snapshot, F, CR, iter, opt)
+    i = @index(Global, Linear)
+    n = length(gpu_particles)
+    if i <= n
+        @inbounds particle = gpu_particles[i]
+        x = particle.best_position
+        @inbounds pa = snapshot[_rand_index(n)]
+        @inbounds pb = snapshot[_rand_index(n)]
+        @inbounds pc = snapshot[_rand_index(n)]
+        trial = de_trial(x, pa, pb, pc, F, CR, _rand_index(length(x)))
+        trial = min.(max.(trial, prob.lb), prob.ub)
+        cost = if !isnothing(prob.f.cons)
+            prob.f(trial, prob.p) + calc_penalty(trial, prob, iter + 1, opt.θ, opt.γ, opt.h)
+        else
+            prob.f(trial, prob.p)
+        end
+        if cost <= particle.best_cost
+            @set! particle.best_position = trial
+            @set! particle.best_cost = cost
+            @inbounds gpu_particles[i] = particle
+        end
+    end
+end
+
+function run_de_step!(prob, gpu_particles, snapshot, opt::ParallelSyncPSOKernel, iter, ndrange, wgs...)
+    backend = get_backend(gpu_particles)
+    snapshot_best_positions!(backend, wgs...)(snapshot, gpu_particles; ndrange)
+    de_step!(backend, wgs...)(
+        prob, gpu_particles, snapshot, eltype(eltype(snapshot))(opt.de_F),
+        eltype(eltype(snapshot))(opt.de_CR), iter, opt; ndrange
+    )
+    return nothing
+end
+
 @kernel function update_particle_states!(
         prob,
         gpu_particles::AbstractArray{SPSOParticle{T1, T2}}, gbest_ref, w,

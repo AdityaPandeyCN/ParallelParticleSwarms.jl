@@ -84,7 +84,7 @@ end
 
 """
     ParallelSyncPSOKernel(num_particles; backend = CPU(), θ = θ_default,
-        γ = γ_default, h = sqrt, workgroupsize = 256)
+        γ = γ_default, h = sqrt, workgroupsize = 256, de_F = 0.0, de_CR = 0.9)
 
 Particle Swarm Optimization that updates particles in parallel and synchronizes
 after each generation to compute the global best position.
@@ -100,6 +100,14 @@ after each generation to compute the global best position.
 - `γ`: PSO velocity update coefficient schedule.
 - `h`: Transformation applied in the update rule.
 - `workgroupsize`: KernelAbstractions workgroup size. Defaults to 256.
+- `de_F`: Differential-evolution step on the personal bests. When positive, every generation
+    starts with each particle proposing `pbest[a] + de_F * (pbest[b] - pbest[c])` (three
+    personal bests drawn at random, binomial crossover with its own personal best at rate
+    `de_CR`), and keeping it as its personal best if it is no worse. This keeps the swarm's
+    step size tied to how spread out the personal bests still are, so the swarm keeps
+    contracting on rugged functions where plain global-best PSO stalls. Each step costs one
+    extra objective evaluation per particle. Defaults to `0.0` (off).
+- `de_CR`: Crossover rate of the differential-evolution step. Defaults to `0.9`.
 
 # Examples
 
@@ -108,6 +116,7 @@ using KernelAbstractions
 using ParallelParticleSwarms
 
 alg = ParallelSyncPSOKernel(100; backend = CPU())
+alg_de = ParallelSyncPSOKernel(100; backend = CPU(), de_F = 0.5)
 ```
 
 """
@@ -118,7 +127,12 @@ struct ParallelSyncPSOKernel{Backend, T, G, H} <: PSOAlgorithm
     γ::G
     h::H
     workgroupsize::Int
+    de_F::Float64
+    de_CR::Float64
 end
+
+ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize) =
+    ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize, 0.0, 0.9)
 
 """
     ParallelPSOArray(num_particles; θ = θ_default, γ = γ_default, h = sqrt)
@@ -202,9 +216,13 @@ end
 function ParallelSyncPSOKernel(
         num_particles::Int;
         backend = CPU(), θ = θ_default, γ = γ_default, h = sqrt,
-        workgroupsize = 256
+        workgroupsize = 256, de_F = 0.0, de_CR = 0.9
     )
-    return ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize)
+    de_F >= 0 || throw(ArgumentError("de_F must be non-negative, got $de_F"))
+    0 <= de_CR <= 1 || throw(ArgumentError("de_CR must be in [0, 1], got $de_CR"))
+    return ParallelSyncPSOKernel(
+        num_particles, backend, θ, γ, h, workgroupsize, Float64(de_F), Float64(de_CR)
+    )
 end
 
 function ParallelPSOArray(num_particles::Int; θ = θ_default, γ = γ_default, h = sqrt)

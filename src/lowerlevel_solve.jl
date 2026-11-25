@@ -24,7 +24,12 @@ function vectorized_solve!(
         typeof(gbest),
         cld(length(gpu_particles), ws)
     )
+    snapshot = opt.de_F > 0 ?
+        KernelAbstractions.allocate(backend, typeof(gbest.position), length(gpu_particles)) :
+        nothing
     for i in 1:maxiters
+        opt.de_F > 0 &&
+            run_de_step!(prob, gpu_particles, snapshot, opt, i, padded_ndrange, workgroupsize)
         update_particle_kernel(
             prob,
             gpu_particles, block_particles,
@@ -51,8 +56,10 @@ function vectorized_solve!(
     backend = get_backend(gpu_particles)
 
     update_particle_kernel = update_particle_states!(backend)
+    snapshot = opt.de_F > 0 ? similar(gpu_particles, typeof(gbest.position)) : nothing
 
     for i in 1:maxiters
+        opt.de_F > 0 && run_de_step!(prob, gpu_particles, snapshot, opt, i, length(gpu_particles))
         update_particle_kernel(
             prob,
             gpu_particles,
