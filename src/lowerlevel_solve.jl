@@ -2,6 +2,28 @@
     return max(1, min(Int(n), opt.workgroupsize))
 end
 
+# Islands: per generation, [DE step on the personal bests →] island bests → PSO update, all on
+# the device; the host only reads the island bests once, after the last generation.
+function _island_solve!(prob, gbest, gpu_particles, opt::ParallelSyncPSOKernel; maxiters, w, wdamp)
+    backend = get_backend(gpu_particles)
+    n = length(gpu_particles)
+    s = opt.island_size
+    gbests = KernelAbstractions.allocate(backend, typeof(gbest), cld(n, s))
+    snapshot = opt.de_F > 0 ?
+        KernelAbstractions.allocate(backend, typeof(gbest.position), n) : nothing
+    best! = island_best!(backend)
+    update! = update_particle_states_islands!(backend)
+    for i in 1:maxiters
+        opt.de_F > 0 && run_de_step!(prob, gpu_particles, snapshot, opt, i, n)
+        best!(gbests, gpu_particles, s; ndrange = length(gbests))
+        update!(prob, gpu_particles, gbests, s, w, opt; ndrange = n)
+        w = w * wdamp
+    end
+    best!(gbests, gpu_particles, s; ndrange = length(gbests))
+    KernelAbstractions.synchronize(backend)
+    return _best_particle(gbests), gpu_particles
+end
+
 function vectorized_solve!(
         prob,
         gbest,
@@ -11,6 +33,7 @@ function vectorized_solve!(
         wdamp = 1.0f0,
         debug = false
     )
+    opt.island_size > 0 && return _island_solve!(prob, gbest, gpu_particles, opt; maxiters, w, wdamp)
     backend = get_backend(gpu_particles)
 
     ws = pso_launch_workgroupsize(opt, length(gpu_particles))
@@ -53,6 +76,7 @@ function vectorized_solve!(
         wdamp = 1.0f0,
         debug = false
     ) where {Backend <: CPU, T, G, H}
+    opt.island_size > 0 && return _island_solve!(prob, gbest, gpu_particles, opt; maxiters, w, wdamp)
     backend = get_backend(gpu_particles)
 
     update_particle_kernel = update_particle_states!(backend)

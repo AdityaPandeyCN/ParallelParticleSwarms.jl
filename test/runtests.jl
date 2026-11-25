@@ -11,6 +11,7 @@ run_tests(;
         @safetestset "Regression tests" include("./regression.jl")
         @safetestset "Reinitialization tests" include("./reinit.jl")
         @safetestset "SimpleLBFGS hybrid polish" include("./lbfgs.jl")
+        @safetestset "DE step and islands" include("./de_islands.jl")
         @safetestset "Algorithm interface tests" include("./interface.jl")
 
         #TODO: Current throws warning for redefinition with the use of @testset multiple times. Migrate to TestItemRunners.jl

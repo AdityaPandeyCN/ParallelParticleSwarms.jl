@@ -50,6 +50,17 @@ end
 # Uniform index in 1:n from a Float32 draw (integer `rand` ranges are not GPU-friendly).
 @inline _rand_index(n) = min(n, unsafe_trunc(Int, rand(Float32) * n) + 1)
 
+# Island of particle `i` (1-based) and its index range, for islands of `s` particles.
+@inline _island(i, s) = (i - 1) ÷ s + 1
+@inline _island_range(k, s, n) = ((k - 1) * s + 1):min(k * s, n)
+
+# A uniformly random particle from `i`'s island (from the whole swarm when `s <= 0`).
+@inline function _rand_member(i, n, s)
+    s <= 0 && return _rand_index(n)
+    r = _island_range(_island(i, s), s, n)
+    return first(r) - 1 + _rand_index(length(r))
+end
+
 # rand/1/bin trial: mutant pa + F (pb - pc), binomial crossover with x at rate CR, and
 # coordinate `jr` always taken from the mutant.
 @inline function de_trial(x::S, pa::S, pb::S, pc::S, F, CR, jr) where {S <: StaticArrays.StaticArray}
@@ -77,9 +88,10 @@ end
     if i <= n
         @inbounds particle = gpu_particles[i]
         x = particle.best_position
-        @inbounds pa = snapshot[_rand_index(n)]
-        @inbounds pb = snapshot[_rand_index(n)]
-        @inbounds pc = snapshot[_rand_index(n)]
+        s = opt.island_size
+        @inbounds pa = snapshot[_rand_member(i, n, s)]
+        @inbounds pb = snapshot[_rand_member(i, n, s)]
+        @inbounds pc = snapshot[_rand_member(i, n, s)]
         trial = de_trial(x, pa, pb, pc, F, CR, _rand_index(length(x)))
         trial = min.(max.(trial, prob.lb), prob.ub)
         cost = if !isnothing(prob.f.cons)
@@ -103,6 +115,34 @@ function run_de_step!(prob, gpu_particles, snapshot, opt::ParallelSyncPSOKernel,
         eltype(eltype(snapshot))(opt.de_CR), iter, opt; ndrange
     )
     return nothing
+end
+
+# Islands (`ParallelSyncPSOKernel(...; island_size)`): one thread per island writes the
+# island's best personal best. Personal bests only improve, so this is the island's best.
+@kernel function island_best!(gbests, gpu_particles, s)
+    k = @index(Global, Linear)
+    n = length(gpu_particles)
+    if k <= length(gbests)
+        r = _island_range(k, s, n)
+        @inbounds best = gpu_particles[first(r)]
+        for j in (first(r) + 1):last(r)
+            @inbounds p = gpu_particles[j]
+            if isless(p.best_cost, best.best_cost)
+                best = p
+            end
+        end
+        @inbounds gbests[k] = SPSOGBest(best.best_position, best.best_cost)
+    end
+end
+
+@kernel function update_particle_states_islands!(prob, gpu_particles, gbests, s, w, opt)
+    i = @index(Global, Linear)
+    if i <= length(gpu_particles)
+        @inbounds particle = gpu_particles[i]
+        @inbounds gbest = gbests[_island(i, s)]
+        particle = update_particle_state(particle, prob, gbest, w, PSO_C1, PSO_C2, i, opt)
+        @inbounds gpu_particles[i] = particle
+    end
 end
 
 @kernel function update_particle_states!(

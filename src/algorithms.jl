@@ -84,7 +84,8 @@ end
 
 """
     ParallelSyncPSOKernel(num_particles; backend = CPU(), θ = θ_default,
-        γ = γ_default, h = sqrt, workgroupsize = 256, de_F = 0.0, de_CR = 0.9)
+        γ = γ_default, h = sqrt, workgroupsize = 256, de_F = 0.0, de_CR = 0.9,
+        island_size = 0)
 
 Particle Swarm Optimization that updates particles in parallel and synchronizes
 after each generation to compute the global best position.
@@ -108,6 +109,12 @@ after each generation to compute the global best position.
     contracting on rugged functions where plain global-best PSO stalls. Each step costs one
     extra objective evaluation per particle. Defaults to `0.0` (off).
 - `de_CR`: Crossover rate of the differential-evolution step. Defaults to `0.9`.
+- `island_size`: When positive, the swarm is split into consecutive islands of this many
+    particles (the last one may be smaller). Each island is an independent swarm: its
+    particles follow the island's own best position, and the differential-evolution step
+    draws its three personal bests from the same island. The islands' bests are kept on
+    the device, so a generation needs no transfer to the host. The returned global best
+    is the best over all islands. Defaults to `0` (one swarm).
 
 # Examples
 
@@ -117,6 +124,7 @@ using ParallelParticleSwarms
 
 alg = ParallelSyncPSOKernel(100; backend = CPU())
 alg_de = ParallelSyncPSOKernel(100; backend = CPU(), de_F = 0.5)
+alg_islands = ParallelSyncPSOKernel(1000; backend = CPU(), de_F = 0.5, island_size = 100)
 ```
 
 """
@@ -129,10 +137,11 @@ struct ParallelSyncPSOKernel{Backend, T, G, H} <: PSOAlgorithm
     workgroupsize::Int
     de_F::Float64
     de_CR::Float64
+    island_size::Int
 end
 
 ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize) =
-    ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize, 0.0, 0.9)
+    ParallelSyncPSOKernel(num_particles, backend, θ, γ, h, workgroupsize, 0.0, 0.9, 0)
 
 """
     ParallelPSOArray(num_particles; θ = θ_default, γ = γ_default, h = sqrt)
@@ -216,12 +225,14 @@ end
 function ParallelSyncPSOKernel(
         num_particles::Int;
         backend = CPU(), θ = θ_default, γ = γ_default, h = sqrt,
-        workgroupsize = 256, de_F = 0.0, de_CR = 0.9
+        workgroupsize = 256, de_F = 0.0, de_CR = 0.9, island_size = 0
     )
     de_F >= 0 || throw(ArgumentError("de_F must be non-negative, got $de_F"))
     0 <= de_CR <= 1 || throw(ArgumentError("de_CR must be in [0, 1], got $de_CR"))
+    island_size >= 0 || throw(ArgumentError("island_size must be non-negative, got $island_size"))
     return ParallelSyncPSOKernel(
-        num_particles, backend, θ, γ, h, workgroupsize, Float64(de_F), Float64(de_CR)
+        num_particles, backend, θ, γ, h, workgroupsize, Float64(de_F), Float64(de_CR),
+        Int(island_size)
     )
 end
 
