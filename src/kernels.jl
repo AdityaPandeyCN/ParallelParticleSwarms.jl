@@ -42,9 +42,9 @@ end
 # winner and the swarm mean. `prev` is the generation's snapshot, so both see the same costs.
 const CSO_PHI = 0.05f0
 
-@inline function competitive_update(particle, i, (prev, partner, x̄, refine, g), prob, opt)
+@inline function competitive_update(particle, i, (prev, pairs, x̄, refine, g), prob, opt)
     particle = rescore(particle, prob, g, opt, prob.f.cons)
-    @inbounds j = Int(partner[i])
+    j = partner(i, length(prev), pairs)
     j == 0 && return particle
     @inbounds rival = score(prev[j], prob, g, opt, prob.f.cons)
     if isless((rival.cost, j), (particle.cost, i))
@@ -55,6 +55,36 @@ const CSO_PHI = 0.05f0
         return record_best(particle)
     end
     return refine ? refine_winner(particle, prev, prob, g, opt) : particle
+end
+
+# Pairs are computed per thread: a keyed Feistel permutation of 0:n-1 (cycle-walked from
+# 0:2^2h-1) gives each particle a position, and positions 2k and 2k + 1 are partners.
+pairing(n) = (ntuple(_ -> rand(UInt32), Val(4)), max(1, cld(ndigits(n - 1; base = 2), 2)))
+
+@inline _mix(x, k) = (y = (x ⊻ k) * 0x9e3779b1; y ⊻ (y >> 15))
+
+@inline function _feistel(x, keys, h, mask, inverse)
+    l, r = x >> h, x & mask
+    for k in (inverse ? reverse(keys) : keys)
+        l, r = inverse ? (r ⊻ (_mix(l, k) & mask), l) : (r, l ⊻ (_mix(r, k) & mask))
+    end
+    return (l << h) | r
+end
+
+# Partner of particle `i`, or 0 for the one left out when n is odd.
+@inline function partner(i, n, (keys, h))
+    mask = (one(UInt32) << h) - one(UInt32)
+    s = _feistel(UInt32(i - 1), keys, h, mask, false)
+    while s >= n
+        s = _feistel(s, keys, h, mask, false)
+    end
+    s ⊻= one(UInt32)
+    s < n || return 0
+    t = _feistel(s, keys, h, mask, true)
+    while t >= n
+        t = _feistel(t, keys, h, mask, true)
+    end
+    return Int(t) + 1
 end
 
 # Refinement runs: the winner tries a differential point and keeps it if no worse.

@@ -214,7 +214,7 @@ end
     @test cache.refine && !init(prob, kernel(10)).refine
 
     # Pairs are reciprocal and unrestricted; one particle sits out when n is odd.
-    pairs(n) = (c = init(prob, kernel(n)); Array(PPS.competition(PPS.competition_buffers(c.alg, c.particles), c.particles, false, 1)[2]))
+    pairs(n) = (p = PPS.pairing(n); [PPS.partner(i, n, p) for i in 1:n])
     @test Set(pairs(6)[1] for _ in 1:200) == Set(2:6)
     @test count(iszero, pairs(7)) == 1
     partner = pairs(50_000)

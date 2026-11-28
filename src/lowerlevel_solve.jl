@@ -2,26 +2,13 @@
     return max(1, min(Int(n), opt.workgroupsize))
 end
 
-function competition_buffers(opt, particles)
-    opt.competitive || return nothing
-    n = length(particles)
-    partner = KernelAbstractions.allocate(get_backend(particles), Int32, n)
-    return (similar(particles), partner, Vector{Int32}(undef, n), Vector{Int}(undef, n))
-end
+competition_buffers(opt, particles) = opt.competitive ? similar(particles) : nothing
 
 # Snapshot, mean and random pairs for generation `g`; `nothing` for standard PSO.
 competition(::Nothing, particles, refine, g) = nothing
-function competition((prev, partner, host, order), particles, refine, g)
+function competition(prev, particles, refine, g)
     copyto!(prev, particles)
-    n = length(particles)
-    Random.randperm!(order)
-    fill!(host, Int32(0))
-    for k in 1:2:(n - 1)
-        host[order[k]] = order[k + 1]
-        host[order[k + 1]] = order[k]
-    end
-    copyto!(partner, host)
-    return (prev, partner, swarm_mean(particles), refine, g)
+    return (prev, pairing(length(particles)), swarm_mean(particles), refine, g)
 end
 
 # Mean position, summed so that it cannot overflow: in Float64 for narrower element types,
